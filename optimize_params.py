@@ -1,18 +1,15 @@
 import numpy as np
 import h5py
 import sys
-import os
-
 from scipy.optimize import minimize
-import configparser
+from utils import load_config, get_vals
 
 class Optimizer:
-    def __init__(self, N, DATA_FILE, SCALE, OUTPUT_FILE):
+    def __init__(self, N, DATA_FILE, SCALE):
         self.N = N
         self.cen = self.N // 2
         self.DATA_FILE = DATA_FILE
         self.SCALE = SCALE
-        self.OUTPUT_FILE = OUTPUT_FILE
         self.load_dataset()
 
     def load_dataset(self):
@@ -21,15 +18,10 @@ class Optimizer:
             self.ftobj = f['ftobj'][:]
             self.funitc = f['funitc'][:]
 
-    def _getvals(self, array, h, k):
-        qh = h + self.cen
-        qk = k + self.cen
-        return array[qh, qk]
-
     def analyze_frame(self, intens, hk):
-        funitc_vals = np.array([self._getvals(self.funitc, *val) for val in hk])
-        ftobj_vals = np.array([self._getvals(self.ftobj, *val) for val in hk])
-        intens_vals = np.array([self._getvals(intens, *val) for val in hk])
+        funitc_vals = np.array([get_vals(self.funitc, self.cen, *val) for val in hk])
+        ftobj_vals = np.array([get_vals(self.ftobj, self.cen, *val) for val in hk])
+        intens_vals = np.array([get_vals(intens, self.cen, *val) for val in hk])
 
         def objective(params):
             dx, dy, fluence = params
@@ -74,39 +66,20 @@ class Optimizer:
         hk = [(0, 1), (1, 1), (1, 0), (1, -1)]
         frames = range(self.intens_vals.shape[0])
 
-        results = []
+        fitted_dx = []
+        fitted_dy = []
+        fitted_fluence = []
+        min_error = []
+
         for frame_idx in frames:
             result = self._optimize_frame(frame_idx, hk)
-            results.append(result)
+            fitted_dx.append(result['fitted_dx'])
+            fitted_dy.append(result['fitted_dy'])
+            fitted_fluence.append(result['fitted_fluence'])
+            min_error.append(result['min_error'])
             print(f"Frame {frame_idx}: dx={result['fitted_dx']}, dy={result['fitted_dy']}, fluence={result['fitted_fluence']}, error={result['min_error']}", file=sys.stdout)
             sys.stdout.flush()
 
-        self.save_results(results)
+        return np.array(fitted_dx), np.array(fitted_dy), np.array(fitted_fluence), np.array(min_error)
 
-    def save_results(self, results):
-        with h5py.File(self.OUTPUT_FILE, 'w') as f:
-            fitted_dx = [result['fitted_dx'] for result in results]
-            fitted_dy = [result['fitted_dy'] for result in results]
-            fitted_fluence = [result['fitted_fluence'] for result in results]
-            min_error = [result['min_error'] for result in results]
-
-            f['fitted_dx'] = fitted_dx
-            f['fitted_dy'] = fitted_dy
-            f['fitted_fl'] = fitted_fluence
-            f['error'] = min_error
-
-def load_config(config_file):
-    config = configparser.ConfigParser()
-    config.read(config_file)
-    N = config.getint('DATA_GENERATION', 'N')
-    SCALE = config.getint('DATA_GENERATION', 'SCALE')
-    DATA_FILE = config.get('DATA_GENERATION', 'DATA_FILE')
-    OUTPUT_FILE = config.get('OPTIMIZATION', 'OUTPUT_FILE')
-    return N, DATA_FILE, SCALE, OUTPUT_FILE
-
-if __name__ == "__main__":
-    config_file = 'config.ini'
-    N, DATA_FILE, SCALE, OUTPUT_FILE = load_config(config_file)
-    optimizer = Optimizer(N, DATA_FILE, SCALE, OUTPUT_FILE)
-    optimizer.optimize_params()
 
