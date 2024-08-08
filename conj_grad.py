@@ -1,17 +1,18 @@
 import numpy as np
-from scipy.optimize import minimize
 import h5py
-import configparser
 import sys
-import os
+from utils import load_config, get_vals
+from scrp1 import Optimizer
 
 class ConjugateGradientOptimizer:
-    def __init__(self, N, DATA_FILE, SCALE, OPTIMIZED_OUTPUT_FILE):
+    def __init__(self, N, DATA_FILE, SCALE, shifts, fluence_vals, OUTPUT_FILE):
         self.N = N
         self.cen = self.N // 2
         self.DATA_FILE = DATA_FILE
         self.SCALE = SCALE
-        self.OPTIMIZED_OUTPUT_FILE = OPTIMIZED_OUTPUT_FILE
+        self.shifts = shifts
+        self.fluence_vals = fluence_vals
+        self.OUTPUT_FILE = OUTPUT_FILE
         self.load_dataset()
 
     def load_dataset(self):
@@ -19,18 +20,11 @@ class ConjugateGradientOptimizer:
             self.intens_vals = f['intens'][:]
             self.ftobj = f['ftobj'][:]
             self.funitc = f['funitc'][:]
-            self.shifts = f['shifts'][:]
-            self.fluence_vals = f['fluence'][:]
             self.num_samples = self.intens_vals.shape[0]
 
-    def _getvals(self, array, h, k):
-        qh = h + self.cen
-        qk = k + self.cen
-        return array[qh, qk]
-
     def optimize_pixel(self, qh, qk):
-        funitc_pixvals = [self._getvals(self.funitc, qh, qk)]
-        intens_pixvals = np.array([self._getvals(self.intens_vals[i], qh, qk) for i in range(self.num_samples)])
+        funitc_pixvals = [get_vals(self.funitc, self.cen, qh, qk)]
+        intens_pixvals = np.array([get_vals(self.intens_vals[i], self.cen, qh, qk) for i in range(self.num_samples)])
 
         def pix_objective(params):
             ftobj_real, ftobj_imag = params
@@ -120,21 +114,21 @@ class ConjugateGradientOptimizer:
         sys.stdout.flush()
 
     def save_results(self, optimized_params):
-        with h5py.File(self.OPTIMIZED_OUTPUT_FILE, 'w') as f:
-            f.create_dataset('optimized_params', data=optimized_params)
+        with h5py.File(self.OUTPUT_FILE, 'w') as f:
+            f.create_dataset('fitted_dx', data=self.shifts[:, 0])
+            f.create_dataset('fitted_dy', data=self.shifts[:, 1])
+            f.create_dataset('fitted_fluence', data=self.fluence_vals)
+            f.create_dataset('ftobj_fitted', data=optimized_params)
 
-def load_config(config_file):
-    config = configparser.ConfigParser()
-    config.read(config_file)
-    N = config.getint('DATA_GENERATION', 'N')
-    SCALE = config.getint('DATA_GENERATION', 'SCALE')
-    DATA_FILE = config.get('DATA_GENERATION', 'DATA_FILE')
-    OPTIMIZED_OUTPUT_FILE = config.get('OPTIMIZATION', 'OPTIMIZED_OUTPUT_FILE')
-    return N, DATA_FILE, SCALE, OPTIMIZED_OUTPUT_FILE
+# Execution line
+config_file = 'config.ini'
+N, DATA_FILE, SCALE, OUTPUT_FILE = load_config(config_file)
 
-if __name__ == "__main__":
-    config_file = 'config.ini'
-    N, DATA_FILE, SCALE, OPTIMIZED_OUTPUT_FILE = load_config(config_file)
-    optimizer = ConjugateGradientOptimizer(N, DATA_FILE, SCALE, OPTIMIZED_OUTPUT_FILE)
-    optimizer.optimize_all_pixels()
+optimizer = Optimizer(N, DATA_FILE, SCALE)
+fitted_dx, fitted_dy, fitted_fluence, min_error = optimizer.optimize_params()
+
+shifts = np.vstack((fitted_dx, fitted_dy)).T
+
+cg_optimizer = ConjugateGradientOptimizer(N, DATA_FILE, SCALE, shifts, fitted_fluence, OUTPUT_FILE)
+cg_optimizer.optimize_all_pixels()
 
