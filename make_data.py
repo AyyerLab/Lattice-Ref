@@ -19,7 +19,8 @@ class DataGenerator:
         np.random.seed(SEED)
         self.dx_vals = np.random.uniform(0, 1, size=NUM_SAMPLES)
         self.dy_vals = np.random.uniform(0, 1, size=NUM_SAMPLES)
-        self.fluence_vals = np.random.uniform(0.5, 1.5, size=NUM_SAMPLES)
+        self.fluence_vals = np.random.uniform(0.1, 1, size=NUM_SAMPLES)
+        #self.fluence_vals = np.random.uniform(0.5, 1.5, size=NUM_SAMPLES)
 
     def target_obj(self):
         tobj = np.zeros((self.N, self.N))
