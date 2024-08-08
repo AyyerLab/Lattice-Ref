@@ -2,23 +2,23 @@ import numpy as np
 import h5py
 import sys
 from utils import load_config, get_vals
-from scrp1 import Optimizer
+from optimize_params import Optimizer
 
 class ConjugateGradientOptimizer:
     def __init__(self, N, DATA_FILE, SCALE, shifts, fluence_vals, OUTPUT_FILE):
         self.N = N
         self.cen = self.N // 2
-        self.DATA_FILE = DATA_FILE
         self.SCALE = SCALE
+        self.DATA_FILE = DATA_FILE
+        self.OUTPUT_FILE = OUTPUT_FILE
+
         self.shifts = shifts
         self.fluence_vals = fluence_vals
-        self.OUTPUT_FILE = OUTPUT_FILE
         self.load_dataset()
 
     def load_dataset(self):
         with h5py.File(self.DATA_FILE, 'r') as f:
             self.intens_vals = f['intens'][:]
-            self.ftobj = f['ftobj'][:]
             self.funitc = f['funitc'][:]
             self.num_samples = self.intens_vals.shape[0]
 
@@ -107,6 +107,8 @@ class ConjugateGradientOptimizer:
                 self._print_progress(pixel_count, total_pixels)
 
         self.save_results(optimized_params)
+        return optimized_params
+
 
     def _print_progress(self, count, total):
         progress = (count / total) * 100
@@ -119,16 +121,4 @@ class ConjugateGradientOptimizer:
             f.create_dataset('fitted_dy', data=self.shifts[:, 1])
             f.create_dataset('fitted_fluence', data=self.fluence_vals)
             f.create_dataset('ftobj_fitted', data=optimized_params)
-
-# Execution line
-config_file = 'config.ini'
-N, DATA_FILE, SCALE, OUTPUT_FILE = load_config(config_file)
-
-optimizer = Optimizer(N, DATA_FILE, SCALE)
-fitted_dx, fitted_dy, fitted_fluence, min_error = optimizer.optimize_params()
-
-shifts = np.vstack((fitted_dx, fitted_dy)).T
-
-cg_optimizer = ConjugateGradientOptimizer(N, DATA_FILE, SCALE, shifts, fitted_fluence, OUTPUT_FILE)
-cg_optimizer.optimize_all_pixels()
 
