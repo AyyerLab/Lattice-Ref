@@ -5,18 +5,19 @@ from scipy.optimize import minimize
 from utils import load_config, get_vals
 
 class Optimizer:
-    def __init__(self, N, DATA_FILE, SCALE):
+    def __init__(self, N, DATA_FILE, SCALE, ftobj):
         self.N = N
         self.cen = self.N // 2
         self.DATA_FILE = DATA_FILE
         self.SCALE = SCALE
+        self.ftobj = ftobj
         self.load_dataset()
 
     def load_dataset(self):
         with h5py.File(self.DATA_FILE, 'r') as f:
             self.intens_vals = f['intens'][:]
-            self.ftobj = f['ftobj'][:]
             self.funitc = f['funitc'][:]
+            #self.ftobj = f['ftobj'][:]
 
     def analyze_frame(self, intens, hk):
         funitc_vals = np.array([get_vals(self.funitc, self.cen, *val) for val in hk])
@@ -77,9 +78,13 @@ class Optimizer:
             fitted_dy.append(result['fitted_dy'])
             fitted_fluence.append(result['fitted_fluence'])
             min_error.append(result['min_error'])
-            print(f"Frame {frame_idx}: dx={result['fitted_dx']}, dy={result['fitted_dy']}, fluence={result['fitted_fluence']}, error={result['min_error']}", file=sys.stdout)
+            print((
+                f"\rFrame {frame_idx}/{len(frames)}: "
+                f"dx={result['fitted_dx']:.2f}, "
+                f"dy={result['fitted_dy']:.2f}, "
+                f"fluence={result['fitted_fluence']:.2f}, "
+                f"error={result['min_error']:.2f}"
+                ), end='', file=sys.stdout)
             sys.stdout.flush()
-
         return np.array(fitted_dx), np.array(fitted_dy), np.array(fitted_fluence), np.array(min_error)
-
 
