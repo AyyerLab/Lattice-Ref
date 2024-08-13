@@ -1,13 +1,19 @@
 import numpy as np
 from scipy import ndimage
 import h5py
+
 import configparser
+import ast
+
+from utils import makedata_config
 
 class DataGenerator:
-    def __init__(self, N, NUM_SAMPLES, SHAPE='rect', SCALE=4, SEED=42):
+    def __init__(self, N, NUM_SAMPLES, SHAPE='rect', SCALE=4, SHIFTS=[0,1], FLUENCE=[0,1], SEED=42):
         self.NUM_SAMPLES = NUM_SAMPLES
         self.SHAPE = SHAPE
         self.SCALE = SCALE
+        self.SHIFTS = SHIFTS
+        self.FLUENCE  = FLUENCE
         self.SEED = SEED
 
         self.N = N
@@ -17,10 +23,10 @@ class DataGenerator:
         self.qh -= self.cen
 
         np.random.seed(SEED)
-        self.dx_vals = np.random.uniform(0, 1, size=NUM_SAMPLES)
-        self.dy_vals = np.random.uniform(0, 1, size=NUM_SAMPLES)
-        self.fluence_vals = np.random.uniform(0.1, 1, size=NUM_SAMPLES)
-        #self.fluence_vals = np.random.uniform(0.5, 1.5, size=NUM_SAMPLES)
+        self.dx_vals = np.random.uniform(SHIFTS[0], SHIFTS[1], size=NUM_SAMPLES)
+        self.dy_vals = np.random.uniform(SHIFTS[0], SHIFTS[1], size=NUM_SAMPLES)
+        self.fluence_vals = np.random.uniform(FLUENCE[0], FLUENCE[1], size=NUM_SAMPLES)
+
 
     def target_obj(self):
         tobj = np.zeros((self.N, self.N))
@@ -69,20 +75,10 @@ class DataGenerator:
             f['shifts'] = np.vstack((self.dx_vals, self.dy_vals)).T
             f['fluence'] = self.fluence_vals
 
-def load_config(config_file):
-    config = configparser.ConfigParser()
-    config.read(config_file)
-    N = config.getint('DATA_GENERATION', 'N')
-    NUM_SAMPLES = config.getint('DATA_GENERATION', 'NUM_SAMPLES')
-    SHAPE = config.get('DATA_GENERATION', 'SHAPE')
-    SCALE = config.getint('DATA_GENERATION', 'SCALE')
-    SEED = config.getint('DATA_GENERATION', 'SEED')
-    DATA_FILE = config.get('DATA_GENERATION', 'DATA_FILE')
-    return N, NUM_SAMPLES, SHAPE, SCALE, SEED, DATA_FILE
 
 if __name__ == "__main__":
     config_file = 'config.ini'
-    N, NUM_SAMPLES, SHAPE, SCALE, SEED, DATA_FILE = load_config(config_file)
-    generator = DataGenerator(N, NUM_SAMPLES, SHAPE, SCALE, SEED)
+    N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, DATA_FILE = makedata_config(config_file)
+    generator = DataGenerator(N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED)
     generator.save_data(DATA_FILE)
 
