@@ -1,38 +1,57 @@
 import numpy as np
 import h5py
 import sys
+import os
 
-from utils import load_config
+from utils import optim_config
 from optimize_params import Optimizer
 from conj_grad import ConjugateGradientOptimizer
 
+class OptimizationRunner:
+    def __init__(self, config_file):
+        self.N, self.NUM_SAMPLES, self.SCALE, self.SEED, self.INIT_FTOBJ, self.DATA_FILE, self.OUTPUT_FILE = optim_config(config_file)
+        self.ftobj = None
 
-#Random Initialization
-np.random.seed(42)
-ftobj = np.random.rand(127, 127) + 1j * np.random.rand(127, 127)
+    def initialize_ftobj(self):
+        if self.INIT_FTOBJ == 'RD':
+            self.ftobj = np.random.rand(self.N, self.N) + 1j * np.random.rand(self.N, self.N)
+        elif self.INIT_FTOBJ == 'TS':
+            self.ftobj = self.load_ftobj()
+        else:
+            raise ValueError(f"Unknown INIT_FTOBJ value: {self.INIT_FTOBJ}")
 
-def run_optimization(N, DATA_FILE, SCALE, ftobj, OUTPUT_FILE, th=1e-6, m_iter=100):
-    err = float('inf')
-    init_iter = 0
-    while err > th and init_iter < m_iter:
-        optimizer = Optimizer(N, DATA_FILE, SCALE, ftobj)
-        fitted_dx, fitted_dy, fitted_fluence, min_error = optimizer.optimize_params()
-        shifts = np.vstack((fitted_dx, fitted_dy)).T
+    def load_ftobj(self):
+        with h5py.File(self.DATA_FILE, 'r') as f:
+            return f['ftobj'][:]
 
-        cg_optimizer = ConjugateGradientOptimizer(N, DATA_FILE, SCALE, shifts, fitted_fluence, OUTPUT_FILE)
-        optimized_ftobj = cg_optimizer.optimize_all_pixels()
+    def run_optimization(self, TH=1e-6, M_ITER=500):
+        self.initialize_ftobj()
+        err = float('inf')
+        INIT_ITER = 1
+        while err > TH and INIT_ITER < M_ITER:
 
-        ftobj_curr = optimized_ftobj[:,:,0] + 1j* optimized_ftobj[:,:,1]
-        err = np.linalg.norm(ftobj_curr - ftobj)
-        ftobj = ftobj_curr
-        init_iter += 1
+            optimizer = Optimizer(self.N, self.DATA_FILE, self.SCALE, self.ftobj, INIT_ITER)
+            fitted_dx, fitted_dy, fitted_fluence, min_error = optimizer.optimize_params()
+            shifts = np.vstack((fitted_dx, fitted_dy)).T
+            sys.stdout.write('\r\033[K')
+            sys.stdout.flush()
 
-        print(f"Iteration {init_iter}, Error: {err}")
-    print("Optimization converged.")
+            cg_optimizer = ConjugateGradientOptimizer(self.N, self.DATA_FILE, self.SCALE, shifts, fitted_fluence, self.OUTPUT_FILE)
+            optimized_ftobj = cg_optimizer.optimize_all_pixels()
+
+            sys.stdout.write('\r\033[K')
+            sys.stdout.flush()
+
+            ftobj_curr = optimized_ftobj[:,:,0] + 1j * optimized_ftobj[:,:,1]
+            err = np.linalg.norm(ftobj_curr - self.ftobj)
+            print(f"ITERATION {INIT_ITER}: ERROR(FTOBJ) = {err}")
+            self.ftobj = ftobj_curr
+            INIT_ITER += 1
 
 
-#RUN OPTIMIZATION
-config_file = 'config.ini'
-N, DATA_FILE, SCALE, OUTPUT_FILE = load_config(config_file)
-run_optimization(N, DATA_FILE, SCALE, ftobj, OUTPUT_FILE)
+        print("OPTIMIZATION CONVERGED.")
 
+if __name__ == "__main__":
+    config_file = 'config.ini'
+    runner = OptimizationRunner(config_file)
+    runner.run_optimization()
