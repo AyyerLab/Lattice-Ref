@@ -2,14 +2,15 @@ import numpy as np
 import h5py
 import sys
 from scipy.optimize import minimize
-from utils import load_config, get_vals
+from utils import get_vals
 
 class Optimizer:
-    def __init__(self, N, DATA_FILE, SCALE, ftobj):
+    def __init__(self, N, DATA_FILE, SCALE, ftobj, INIT_ITER):
         self.N = N
-        self.cen = self.N // 2
+        self.cen = N // 2
         self.DATA_FILE = DATA_FILE
         self.SCALE = SCALE
+        self.INIT_ITER = INIT_ITER
         self.ftobj = ftobj
         self.load_dataset()
 
@@ -17,7 +18,7 @@ class Optimizer:
         with h5py.File(self.DATA_FILE, 'r') as f:
             self.intens_vals = f['intens'][:]
             self.funitc = f['funitc'][:]
-            #self.ftobj = f['ftobj'][:]
+            self.fluence_vals = f['fluence'][:]
 
     def analyze_frame(self, intens, hk):
         funitc_vals = np.array([get_vals(self.funitc, self.cen, *val) for val in hk])
@@ -63,6 +64,7 @@ class Optimizer:
         }
         return result
 
+
     def optimize_params(self):
         hk = [(0, 1), (1, 1), (1, 0), (1, -1)]
         frames = range(self.intens_vals.shape[0])
@@ -79,12 +81,13 @@ class Optimizer:
             fitted_fluence.append(result['fitted_fluence'])
             min_error.append(result['min_error'])
             print((
-                f"\rFrame {frame_idx}/{len(frames)}: "
-                f"dx={result['fitted_dx']:.2f}, "
-                f"dy={result['fitted_dy']:.2f}, "
-                f"fluence={result['fitted_fluence']:.2f}, "
-                f"error={result['min_error']:.2f}"
-                ), end='', file=sys.stdout)
+                f"\rITER {self.INIT_ITER}: "
+                f"FRAME {frame_idx}/{len(frames)}: "
+                f"Dx={result['fitted_dx']:.3f}, "
+                f"Dy={result['fitted_dy']:.3f}, "
+                f"FLUENCE={result['fitted_fluence']:.3f}, "
+                f"ERROR={result['min_error']:.3e}"
+            ), end='', file=sys.stdout)
             sys.stdout.flush()
-        return np.array(fitted_dx), np.array(fitted_dy), np.array(fitted_fluence), np.array(min_error)
 
+        return np.array(fitted_dx), np.array(fitted_dy), np.array(fitted_fluence), np.array(min_error)
