@@ -1,7 +1,7 @@
 import numpy as np
 import h5py
 import sys
-from utils import load_config, get_vals
+from utils import get_vals
 from optimize_params import Optimizer
 
 class ConjugateGradientOptimizer:
@@ -111,8 +111,8 @@ class ConjugateGradientOptimizer:
 
 
     def _print_progress(self, count, total):
-        progress = (count / total) * 100
-        sys.stdout.write(f'\rOptimized {count}/{total} pixels ({progress:.2f}%)')
+        PROGRESS = (count / total) * 100
+        sys.stdout.write(f'\rOPTIMIZED {count}/{total} PIXELS ({PROGRESS:.2f}%)')
         sys.stdout.flush()
 
     def save_results(self, optimized_params):
