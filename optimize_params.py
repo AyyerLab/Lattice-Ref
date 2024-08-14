@@ -45,7 +45,7 @@ class Optimizer:
         optimal_params = None
 
         for params in params_grid:
-            res = minimize(objective, params, method='Nelder-Mead')
+            res = minimize(objective, params, method='L-BFGS-B')
             if res.fun < min_error:
                 min_error = res.fun
                 optimal_params = res.x
