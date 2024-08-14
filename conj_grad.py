@@ -23,45 +23,40 @@ class ConjugateGradientOptimizer:
             self.num_samples = self.intens_vals.shape[0]
 
     def optimize_pixel(self, qh, qk):
-        funitc_pixvals = [get_vals(self.funitc, self.cen, qh, qk)]
+        funitc_pixvals = get_vals(self.funitc, self.cen, qh, qk)
         intens_pixvals = np.array([get_vals(self.intens_vals[i], self.cen, qh, qk) for i in range(self.num_samples)])
+
+        phases = 2.0 * np.pi * (qh * self.shifts[:, 0] + qk * self.shifts[:, 1])
+        pramp = np.exp(1j * phases)
 
         def pix_objective(params):
             ftobj_real, ftobj_imag = params
             ftobj_val = ftobj_real + 1j * ftobj_imag
-            error = 0
-            funitc_val = funitc_pixvals[0]
+            funitc_val = funitc_pixvals
 
-            for d in range(self.num_samples):
-                phase = 2.0 * np.pi * (qh * self.shifts[d, 0] + qk * self.shifts[d, 1])
-                pramp = np.exp(1j * phase)
-                model_int = self.fluence_vals[d] * np.abs(self.SCALE * funitc_val + ftobj_val * pramp)**2
-                error += (model_int - intens_pixvals[d])**2
-
+            F = self.SCALE * funitc_val + ftobj_val * pramp
+            model_int = self.fluence_vals * np.abs(F)**2
+            residuals = model_int - intens_pixvals
+            error = np.sum(residuals**2)
             return error
 
         def pix_objective_grad(params):
             ftobj_real, ftobj_imag = params
             ftobj_val = ftobj_real + 1j * ftobj_imag
-            grad_real = 0
-            grad_imag = 0
-            funitc_val = funitc_pixvals[0]
+            funitc_val = funitc_pixvals
 
-            for d in range(self.num_samples):
-                phase = 2.0 * np.pi * (qh * self.shifts[d, 0] + qk * self.shifts[d, 1])
-                pramp = np.exp(1j * phase)
-                F = self.SCALE * funitc_val + ftobj_val * pramp
-                model_int = self.fluence_vals[d] * np.abs(F)**2
-                residual = model_int - intens_pixvals[d]
+            F = self.SCALE * funitc_val + ftobj_val * pramp
+            model_int = self.fluence_vals * np.abs(F)**2
+            residuals = model_int - intens_pixvals
 
-                F_real = self.SCALE * funitc_val.real + ftobj_real * np.cos(phase) - ftobj_imag * np.sin(phase)
-                F_imag = self.SCALE * funitc_val.imag + ftobj_real * np.sin(phase) + ftobj_imag * np.cos(phase)
+            F_real = self.SCALE * funitc_val.real + ftobj_real * np.cos(phases) - ftobj_imag * np.sin(phases)
+            F_imag = self.SCALE * funitc_val.imag + ftobj_real * np.sin(phases) + ftobj_imag * np.cos(phases)
 
-                d_model_int_d_real = 2 * self.fluence_vals[d] * (F_real * np.cos(phase) + F_imag * np.sin(phase))
-                d_model_int_d_imag = 2 * self.fluence_vals[d] * (F_imag * np.cos(phase) - F_real * np.sin(phase))
+            d_model_int_d_real = 2 * self.fluence_vals * (F_real * np.cos(phases) + F_imag * np.sin(phases))
+            d_model_int_d_imag = 2 * self.fluence_vals * (F_imag * np.cos(phases) - F_real * np.sin(phases))
 
-                grad_real += 2 * residual * d_model_int_d_real
-                grad_imag += 2 * residual * d_model_int_d_imag
+            grad_real = 2 * np.sum(residuals * d_model_int_d_real)
+            grad_imag = 2 * np.sum(residuals * d_model_int_d_imag)
 
             return np.array([grad_real, grad_imag])
 
