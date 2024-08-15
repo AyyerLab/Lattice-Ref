@@ -49,10 +49,9 @@ class Optimizer:
                         min_error = objective_value
                         optimal_params = (dx, dy, fl)
 
-        fine_step_size = 0.01
-        dx_fine_range = np.arange(max(optimal_params[0] - 0.005, 0), min(optimal_params[0] + 0.1, 1), fine_step_size)
-        dy_fine_range = np.arange(max(optimal_params[1] - 0.005, 0), min(optimal_params[1] + 0.1, 1), fine_step_size)
-        fluence_fine_range = np.arange(max(optimal_params[2] - 0.1, 0), min(optimal_params[2] + 0.1, 10), fine_step_size)
+        dx_fine_range = np.arange(max(optimal_params[0] - 0.05, 0), min(optimal_params[0] + 0.05, 1), 0.005)
+        dy_fine_range = np.arange(max(optimal_params[1] - 0.05, 0), min(optimal_params[1] + 0.05, 1), 0.005)
+        fluence_fine_range = np.arange(max(optimal_params[2] - 0.1, 0), min(optimal_params[2] + 0.1, 10), 0.01)
 
         min_error_fine = np.finfo('f8').max
 
