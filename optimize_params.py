@@ -1,7 +1,6 @@
 import numpy as np
 import h5py
 import sys
-from scipy.optimize import minimize
 from utils import get_vals
 
 class Optimizer:
@@ -35,22 +34,37 @@ class Optimizer:
             error = np.sum((model_int - intens_vals) ** 2)
             return error
 
-        dx_range = np.linspace(0, 1, 4)
-        dy_range = np.linspace(0, 1, 4)
+        ncoarse = 50
         fluence_range = np.arange(0, 10, 0.5)
-        dx_grid, dy_grid, fluence_grid = np.meshgrid(dx_range, dy_range, fluence_range)
+        dx_range = np.linspace(0, 1, ncoarse)
+        dy_range = np.linspace(0, 1, ncoarse)
 
-        params_grid = np.array([dx_grid.ravel(), dy_grid.ravel(), fluence_grid.ravel()]).T
         min_error = np.finfo('f8').max
-        optimal_params = None
 
-        for params in params_grid:
-            res = minimize(objective, params, method='L-BFGS-B')
-            if res.fun < min_error:
-                min_error = res.fun
-                optimal_params = res.x
+        for dx in dx_range:
+            for dy in dy_range:
+                for fl in fluence_range:
+                    objective_value = objective((dx, dy, fl))
+                    if objective_value < min_error:
+                        min_error = objective_value
+                        optimal_params = (dx, dy, fl)
 
-        return optimal_params, min_error
+        fine_step_size = 0.01
+        dx_fine_range = np.arange(max(optimal_params[0] - 0.005, 0), min(optimal_params[0] + 0.1, 1), fine_step_size)
+        dy_fine_range = np.arange(max(optimal_params[1] - 0.005, 0), min(optimal_params[1] + 0.1, 1), fine_step_size)
+        fluence_fine_range = np.arange(max(optimal_params[2] - 0.1, 0), min(optimal_params[2] + 0.1, 10), fine_step_size)
+
+        min_error_fine = np.finfo('f8').max
+
+        for dx in dx_fine_range:
+            for dy in dy_fine_range:
+                for fl in fluence_fine_range:
+                    objective_value = objective((dx, dy, fl))
+                    if objective_value < min_error_fine:
+                        min_error_fine = objective_value
+                        optimal_params_fine = (dx, dy, fl)
+
+        return optimal_params_fine, min_error_fine
 
     def _optimize_frame(self, frame_idx, hk):
         intens = self.intens_vals[frame_idx]
@@ -59,11 +73,10 @@ class Optimizer:
             'frame_idx': frame_idx,
             'fitted_dx': optimal_params[0] % 1,
             'fitted_dy': optimal_params[1] % 1,
-            'fitted_fluence': optimal_params[2] % 1,
+            'fitted_fluence': optimal_params[2],
             'min_error': min_error
         }
         return result
-
 
     def optimize_params(self):
         hk = [(0, 1), (1, 1), (1, 0), (1, -1)]
@@ -91,3 +104,4 @@ class Optimizer:
             sys.stdout.flush()
 
         return np.array(fitted_dx), np.array(fitted_dy), np.array(fitted_fluence), np.array(min_error)
+
