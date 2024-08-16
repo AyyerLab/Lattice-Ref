@@ -1,7 +1,7 @@
 import numpy as np
 import h5py
-import sys
 from utils import get_vals
+import sys 
 
 class Optimizer:
     def __init__(self, N, DATA_FILE, SCALE, ftobj, INIT_ITER):
@@ -31,11 +31,12 @@ class Optimizer:
             phase = 2.0 * np.pi * (qh * dx + qk * dy)
             pramp = np.exp(1j * phase)
             model_int = fluence * np.abs(self.SCALE * funitc_vals + ftobj_vals * pramp) ** 2
-            error = np.sum((model_int - intens_vals) ** 2)
+            error = np.sum((model_int - intens_vals)**2)
             return error
 
-        ncoarse = 50
-        fluence_range = np.arange(0, 10, 0.5)
+        # Initial coarse search
+        ncoarse = 200
+        fluence_range = np.linspace(0.1, 10, ncoarse)
         dx_range = np.linspace(0, 1, ncoarse)
         dy_range = np.linspace(0, 1, ncoarse)
 
@@ -49,21 +50,34 @@ class Optimizer:
                         min_error = objective_value
                         optimal_params = (dx, dy, fl)
 
-        dx_fine_range = np.arange(max(optimal_params[0] - 0.05, 0), min(optimal_params[0] + 0.05, 1), 0.005)
-        dy_fine_range = np.arange(max(optimal_params[1] - 0.05, 0), min(optimal_params[1] + 0.05, 1), 0.005)
-        fluence_fine_range = np.arange(max(optimal_params[2] - 0.1, 0), min(optimal_params[2] + 0.1, 10), 0.01)
+        # Adaptive refinement
+        refinement_steps = 1000
+        threshold = 1e-4
+        step_size = 0.05
 
-        min_error_fine = np.finfo('f8').max
+        for _ in range(refinement_steps):
+            dx_fine_range = np.arange(max(optimal_params[0] - step_size, 0), min(optimal_params[0] + step_size, 1), step_size / 10)
+            dy_fine_range = np.arange(max(optimal_params[1] - step_size, 0), min(optimal_params[1] + step_size, 1), step_size / 10)
+            fluence_fine_range = np.arange(max(optimal_params[2] - step_size * 2, 0.1), min(optimal_params[2] + step_size * 2, 10), step_size / 5)
 
-        for dx in dx_fine_range:
-            for dy in dy_fine_range:
-                for fl in fluence_fine_range:
-                    objective_value = objective((dx, dy, fl))
-                    if objective_value < min_error_fine:
-                        min_error_fine = objective_value
-                        optimal_params_fine = (dx, dy, fl)
+            min_error_fine = np.finfo('f8').max
 
-        return optimal_params_fine, min_error_fine
+            for dx in dx_fine_range:
+                for dy in dy_fine_range:
+                    for fl in fluence_fine_range:
+                        objective_value = objective((dx, dy, fl))
+                        if objective_value < min_error_fine:
+                            min_error_fine = objective_value
+                            optimal_params_fine = (dx, dy, fl)
+
+            if np.abs(min_error - min_error_fine) < threshold:
+                break
+
+            optimal_params = optimal_params_fine
+            min_error = min_error_fine
+            step_size /= 2
+
+        return optimal_params, min_error
 
     def _optimize_frame(self, frame_idx, hk):
         intens = self.intens_vals[frame_idx]
