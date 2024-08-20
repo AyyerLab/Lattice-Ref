@@ -24,19 +24,36 @@ class OptimizationRunner:
         with h5py.File(self.DATA_FILE, 'r') as f:
             return f['ftobj'][:]
 
-    def run_optimization(self, TH=1e-6, M_ITER=500):
+    def load_true_values(self):
+        with h5py.File(self.DATA_FILE, 'r') as f:
+            fluence = f['fluence'][:]
+            dx = f['shifts'][:,0]
+            dy = f['shifts'][:,1]
+        return dx, dy, fluence
+
+    def run_optimization(self, TH=1e-6, M_ITER=500, use_true_values=False):
         self.initialize_ftobj()
         err = float('inf')
         INIT_ITER = 1
-        while err > TH and INIT_ITER < M_ITER:
 
-            optimizer = Optimizer(self.N, self.DATA_FILE, self.SCALE, self.ftobj, INIT_ITER)
-            fitted_dx, fitted_dy, fitted_fluence, min_error = optimizer.optimize_params()
-            shifts = np.vstack((fitted_dx, fitted_dy)).T
+        if use_true_values:
+            dx, dy, fluence = self.load_true_values()
+            shifts = np.vstack((dx, dy)).T
+        else:
+            shifts = None
+            fluence = None
+
+        while err > TH and INIT_ITER < M_ITER:
+            if not use_true_values:
+                optimizer = Optimizer(self.N, self.DATA_FILE, self.SCALE, self.ftobj, INIT_ITER)
+                fitted_dx, fitted_dy, fitted_fluence, min_error = optimizer.optimize_params()
+                shifts = np.vstack((fitted_dx, fitted_dy)).T
+                fluence = fitted_fluence
+
             sys.stdout.write('\r\033[K')
             sys.stdout.flush()
 
-            cg_optimizer = ConjugateGradientOptimizer(self.N, self.DATA_FILE, self.SCALE, shifts, fitted_fluence, self.OUTPUT_FILE)
+            cg_optimizer = ConjugateGradientOptimizer(self.N, self.DATA_FILE, self.SCALE, shifts, fluence, self.OUTPUT_FILE)
             optimized_ftobj = cg_optimizer.optimize_all_pixels()
 
             sys.stdout.write('\r\033[K')
@@ -45,13 +62,14 @@ class OptimizationRunner:
             ftobj_curr = optimized_ftobj[:,:,0] + 1j * optimized_ftobj[:,:,1]
             err = np.linalg.norm(ftobj_curr - self.ftobj)
             print(f"ITERATION {INIT_ITER}: ERROR(FTOBJ) = {err}")
-            self.ftobj = ftobj_curr
+            #self.ftobj = ftobj_curr
             INIT_ITER += 1
-
 
         print("OPTIMIZATION CONVERGED.")
 
 if __name__ == "__main__":
     config_file = 'config.ini'
     runner = OptimizationRunner(config_file)
-    runner.run_optimization()
+    use_true_values = True 
+    runner.run_optimization(use_true_values=use_true_values)
+
