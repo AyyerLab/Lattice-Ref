@@ -20,11 +20,11 @@ class ConjugateGradientOptimizer:
         with h5py.File(self.DATA_FILE, 'r') as f:
             self.intens_vals = f['intens'][:]
             self.funitc = f['funitc'][:]
-            self.num_samples = self.intens_vals.shape[0]
+            self.NUM_SAMPLES = self.intens_vals.shape[0]
 
     def optimize_pixel(self, qh, qk):
         funitc_pixvals = get_vals(self.funitc, self.cen, qh, qk)
-        intens_pixvals = np.array([get_vals(self.intens_vals[i], self.cen, qh, qk) for i in range(self.num_samples)])
+        intens_pixvals = np.array([get_vals(self.intens_vals[i], self.cen, qh, qk) for i in range(self.NUM_SAMPLES)])
 
         phases = 2.0 * np.pi * (qh * self.shifts[:, 0] + qk * self.shifts[:, 1])
         pramp = np.exp(1j * phases)
@@ -60,7 +60,7 @@ class ConjugateGradientOptimizer:
 
             return np.array([grad_real, grad_imag])
 
-        def line_search(f, grad, params, direction, alpha=1.0, beta=0.5, sigma=1e-4):
+        def line_search(f, grad, params, direction, alpha=1, beta=0.3, sigma=1e-4):
             while f(params + alpha * direction) > f(params) + sigma * alpha * np.dot(grad, direction):
                 alpha *= beta
             return alpha
@@ -103,7 +103,6 @@ class ConjugateGradientOptimizer:
 
         self.save_results(optimized_params)
         return optimized_params
-
 
     def _print_progress(self, count, total):
         PROGRESS = (count / total) * 100
