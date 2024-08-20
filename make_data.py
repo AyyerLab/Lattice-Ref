@@ -49,7 +49,8 @@ class DataGenerator:
         np.random.seed(self.SEED)
         random_ = np.random.rand(self.N, self.N)
         random_ = random_ > 0.7
-        unitc = ndimage.gaussian_filter(random_.astype(float), sigma=(1.75, 1.25), mode='wrap')
+        #unitc = ndimage.gaussian_filter(random_.astype(float), sigma=(1.75, 1.25), mode='wrap')
+        unitc = ndimage.gaussian_filter(random_.astype(float), sigma=(0.7, 0.7), mode='wrap')
         return unitc, np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(unitc)))
 
     def generate_dataset(self):
