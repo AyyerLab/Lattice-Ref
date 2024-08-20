@@ -1,7 +1,7 @@
 import numpy as np
 import h5py
 from utils import get_vals
-import sys 
+import sys
 
 class Optimizer:
     def __init__(self, N, DATA_FILE, SCALE, ftobj, INIT_ITER):
@@ -35,30 +35,25 @@ class Optimizer:
             error = np.sum((model_int - intens_vals)**2)
             return error
 
-        # Initial coarse search
         ncoarse = 300
         fluence_range = np.linspace(0.1, 10, ncoarse)
         dx_range = np.linspace(0, 1, ncoarse)
         dy_range = np.linspace(0, 1, ncoarse)
 
-        # Create a meshgrid for dx, dy, fluence
         dx_grid, dy_grid, fluence_grid = np.meshgrid(dx_range, dy_range, fluence_range, indexing='ij')
         dx_grid = dx_grid.ravel()
         dy_grid = dy_grid.ravel()
         fluence_grid = fluence_grid.ravel()
 
-        # Vectorized objective calculation
         phase_grid = 2.0 * np.pi * (qh[:, None] * dx_grid + qk[:, None] * dy_grid)
         pramp_grid = np.exp(1j * phase_grid)
         model_int_grid = fluence_grid * np.abs(self.SCALE * funitc_vals[:, None] + ftobj_vals[:, None] * pramp_grid) ** 2
         error_grid = np.sum((model_int_grid - intens_vals[:, None]) ** 2, axis=0)
 
-        # Find the minimum error and corresponding parameters
         min_error_idx = np.argmin(error_grid)
         optimal_params = (dx_grid[min_error_idx], dy_grid[min_error_idx], fluence_grid[min_error_idx])
         min_error = error_grid[min_error_idx]
 
-        # Adaptive refinement
         refinement_steps = 1000
         threshold = 1e-4
         gsize = 0.05
