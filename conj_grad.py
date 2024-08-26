@@ -5,10 +5,11 @@ from utils import get_vals
 from optimize_params import Optimizer
 
 class ConjugateGradientOptimizer:
-    def __init__(self, N, DATA_FILE, SCALE, shifts, fluence_vals, OUTPUT_FILE):
+    def __init__(self, N, DATA_FILE, SCALE, shifts, fluence_vals, OUTPUT_FILE , itern):
         self.N = N
         self.cen = self.N // 2
         self.SCALE = SCALE
+        self.ITERATION = itern
         self.DATA_FILE = DATA_FILE
         self.OUTPUT_FILE = OUTPUT_FILE
 
@@ -94,14 +95,14 @@ class ConjugateGradientOptimizer:
         total_pixels = (self.N * self.N)
         pixel_count = 0
 
-        for h in range(-self.cen, self.cen):
-            for k in range(-self.cen, self.cen):
+        for h in range(-self.cen, self.cen + 1):
+            for k in range(-self.cen, self.cen + 1):
                 params = self.optimize_pixel(h, k)
                 optimized_params[h + self.cen, k + self.cen] = params
                 pixel_count += 1
                 self._print_progress(pixel_count, total_pixels)
 
-        self.save_results(optimized_params)
+        self.save_results(optimized_params, self.ITERATION)
         return optimized_params
 
     def _print_progress(self, count, total):
@@ -109,10 +110,13 @@ class ConjugateGradientOptimizer:
         sys.stdout.write(f'\rOPTIMIZED {count}/{total} PIXELS ({PROGRESS:.2f}%)')
         sys.stdout.flush()
 
-    def save_results(self, optimized_params):
-        with h5py.File(self.OUTPUT_FILE, 'w') as f:
+    def save_results(self, optimized_params, iteration):
+        output_file = self.OUTPUT_FILE.replace('.h5', f'{iteration}.h5')
+    
+        with h5py.File(output_file, 'w') as f:
             f.create_dataset('fitted_dx', data=self.shifts[:, 0])
             f.create_dataset('fitted_dy', data=self.shifts[:, 1])
             f.create_dataset('fitted_fluence', data=self.fluence_vals)
             f.create_dataset('ftobj_fitted', data=optimized_params)
+
 
