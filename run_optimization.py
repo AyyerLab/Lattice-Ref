@@ -31,7 +31,7 @@ class OptimizationRunner:
             dy = f['shifts'][:,1]
         return dx, dy, fluence
 
-    def run_optimization(self, TH=1e-6, M_ITER=500, use_true_values=False):
+    def run_optimization(self, TH=1e-6, M_ITER=1000, use_true_values=False):
         self.initialize_ftobj()
         err = float('inf')
         INIT_ITER = 1
@@ -53,7 +53,7 @@ class OptimizationRunner:
             sys.stdout.write('\r\033[K')
             sys.stdout.flush()
 
-            cg_optimizer = ConjugateGradientOptimizer(self.N, self.DATA_FILE, self.SCALE, shifts, fluence, self.OUTPUT_FILE)
+            cg_optimizer = ConjugateGradientOptimizer(self.N, self.DATA_FILE, self.SCALE, shifts, fluence, self.OUTPUT_FILE, INIT_ITER)
             optimized_ftobj = cg_optimizer.optimize_all_pixels()
 
             sys.stdout.write('\r\033[K')
@@ -62,7 +62,7 @@ class OptimizationRunner:
             ftobj_curr = optimized_ftobj[:,:,0] + 1j * optimized_ftobj[:,:,1]
             err = np.linalg.norm(ftobj_curr - self.ftobj)
             print(f"ITERATION {INIT_ITER}: ERROR(FTOBJ) = {err}")
-            #self.ftobj = ftobj_curr
+            self.ftobj = ftobj_curr
             INIT_ITER += 1
 
         print("OPTIMIZATION CONVERGED.")
@@ -70,6 +70,6 @@ class OptimizationRunner:
 if __name__ == "__main__":
     config_file = 'config.ini'
     runner = OptimizationRunner(config_file)
-    use_true_values = True 
+    use_true_values = False 
     runner.run_optimization(use_true_values=use_true_values)
 
