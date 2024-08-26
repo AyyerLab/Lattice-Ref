@@ -65,14 +65,16 @@ class DataGenerator:
         for i in range(self.NUM_SAMPLES):
             intens = self.fluence_vals[i] * np.abs(self.SCALE * funitc + ftobj * self.phase_ramp(self.dx_vals[i], self.dy_vals[i]))**2
             intens_vals[i] = intens
-        return intens_vals, ftobj, funitc
+        return intens_vals, ftobj, funitc, tobj, unitc
 
     def save_data(self, filename):
-        intens_vals, ftobj, funitc = self.generate_dataset()
+        intens_vals, ftobj, funitc, tobj, unitc = self.generate_dataset()
         with h5py.File(filename, 'w') as f:
             f['intens'] = intens_vals
             f['ftobj'] = ftobj
+            f['tobj'] = tobj
             f['funitc'] = funitc
+            f['unitc'] = unitc
             f['shifts'] = np.vstack((self.dx_vals, self.dy_vals)).T
             f['fluence'] = self.fluence_vals
 
