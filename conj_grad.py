@@ -61,12 +61,12 @@ class ConjugateGradientOptimizer:
 
             return np.array([grad_real, grad_imag])
 
-        def line_search(f, grad, params, direction, alpha=1, beta=0.3, sigma=1e-4):
+        def line_search(f, grad, params, direction, alpha=0.8, beta=0.5, sigma=5e-1):
             while f(params + alpha * direction) > f(params) + sigma * alpha * np.dot(grad, direction):
                 alpha *= beta
             return alpha
 
-        def conjugate_gradient_descent(f, grad_f, initial_params, tol=1e-6, max_iter=1000):
+        def conjugate_gradient_descent(f, grad_f, initial_params, tol=1e-8, max_iter=2000):
             params = initial_params
             grad = grad_f(params)
             direction = -grad
