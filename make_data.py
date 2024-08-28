@@ -28,15 +28,30 @@ class DataGenerator:
         self.fluence_vals = np.random.uniform(FLUENCE[0], FLUENCE[1], size=NUM_SAMPLES)
 
 
-    def target_obj(self):
-        tobj = np.zeros((self.N, self.N))
-        if self.SHAPE == 'X':
-            tobj[25:80, self.N//2-5:self.N//2+5] = 1
-            tobj[20:40, self.N//2-20:self.N//2+20] = 1
-            tobj[50:60, self.N//2-20:self.N//2+20] = 1
+    def target_obj(self, HETRO=False, CREATE_RAND=False):
+        size = self.N
+        mcen = size // 2
+        x, y = np.indices((size, size), dtype='f8')
+        mask = np.zeros((size, size), dtype='f8')
+
+        if self.SHAPE == 'cluster':
+            num_circ = 55 if not HETRO else 25
+            for i in range(num_circ):
+                if CREATE_RAND:
+                    rad = (0.7 + 0.3 * np.random.rand()) * size / 25.0
+                    cen = np.random.rand(2) * size / 5.0 + mcen * 4.0 / 5.0
+                else:
+                    rad = (0.7 + 0.3 * (np.cos(2.5 * i) - np.sin(i / 4.0))) * size / 20.0
+                    cen = [
+                        (3 * np.sin(2 * i) + 0.5 * np.sin(i / 2.0)) * size / 45.0 + mcen * 4.0 / 4.4,
+                        (0.5 * np.cos(i / 2.0) + 3 * np.cos(i / 2.0)) * size / 45.0 + mcen * 4.0 / 4.4
+                        ]
+                diskrad = np.sqrt((x - cen[0])**2 + (y - cen[1])**2)
+                mask[diskrad <= rad] += 1.0 - (diskrad[diskrad <= rad] / rad)**2
         elif self.SHAPE == 'rect':
-            tobj[45:70, 40:70] = 1
-        return tobj, np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(tobj)))
+                mask[45:70, 40:70] = 1
+        return mask, np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(mask)))
+
 
     def phase_ramp(self, shiftx, shifty):
         return np.exp(1j * 2.0 * np.pi * (self.qh * shiftx + self.qk * shifty))
