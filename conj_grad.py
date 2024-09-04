@@ -2,10 +2,9 @@ import numpy as np
 import h5py
 import sys
 from utils import get_vals
-from optimize_params import Optimizer
 
 class ConjugateGradientOptimizer:
-    def __init__(self, N, DATA_FILE, SCALE, shifts, fluence_vals, OUTPUT_FILE , itern):
+    def __init__(self, N, DATA_FILE, SCALE, shifts, fluence_vals, OUTPUT_FILE, itern):
         self.N = N
         self.cen = self.N // 2
         self.SCALE = SCALE
@@ -35,8 +34,8 @@ class ConjugateGradientOptimizer:
             ftobj_val = ftobj_real + 1j * ftobj_imag
             funitc_val = funitc_pixvals
 
-            F = self.SCALE * funitc_val + ftobj_val * pramp
-            model_int = self.fluence_vals * np.abs(F)**2
+            F = funitc_val + self.fluence_vals * ftobj_val * pramp
+            model_int = np.abs(F)**2
             residuals = model_int - intens_pixvals
             error = np.sum(residuals**2)
             return error
@@ -46,22 +45,25 @@ class ConjugateGradientOptimizer:
             ftobj_val = ftobj_real + 1j * ftobj_imag
             funitc_val = funitc_pixvals
 
-            F = self.SCALE * funitc_val + ftobj_val * pramp
-            model_int = self.fluence_vals * np.abs(F)**2
+            F = funitc_val + self.fluence_vals * ftobj_val * pramp
+            model_int = np.abs(F)**2
             residuals = model_int - intens_pixvals
 
-            F_real = self.SCALE * funitc_val.real + ftobj_real * np.cos(phases) - ftobj_imag * np.sin(phases)
-            F_imag = self.SCALE * funitc_val.imag + ftobj_real * np.sin(phases) + ftobj_imag * np.cos(phases)
+            F_real = F.real
+            F_imag = F.imag
 
-            d_model_int_d_real = 2 * self.fluence_vals * (F_real * np.cos(phases) + F_imag * np.sin(phases))
-            d_model_int_d_imag = 2 * self.fluence_vals * (F_imag * np.cos(phases) - F_real * np.sin(phases))
+            dF_dreal = self.fluence_vals * pramp.real
+            dF_dimag = self.fluence_vals * pramp.imag
+
+            d_model_int_d_real = 2 * (F_real * dF_dreal + F_imag * dF_dimag)
+            d_model_int_d_imag = 2 * (F_imag * dF_dreal - F_real * dF_dimag)
 
             grad_real = 2 * np.sum(residuals * d_model_int_d_real)
             grad_imag = 2 * np.sum(residuals * d_model_int_d_imag)
 
             return np.array([grad_real, grad_imag])
 
-        def line_search(f, grad, params, direction, alpha=0.8, beta=0.5, sigma=5e-1):
+        def line_search(f, grad, params, direction, alpha=0.8, beta=0.4, sigma=85e-2):
             while f(params + alpha * direction) > f(params) + sigma * alpha * np.dot(grad, direction):
                 alpha *= beta
             return alpha
@@ -112,11 +114,10 @@ class ConjugateGradientOptimizer:
 
     def save_results(self, optimized_params, iteration):
         output_file = self.OUTPUT_FILE.replace('.h5', f'{iteration}.h5')
-    
+
         with h5py.File(output_file, 'w') as f:
             f.create_dataset('fitted_dx', data=self.shifts[:, 0])
             f.create_dataset('fitted_dy', data=self.shifts[:, 1])
             f.create_dataset('fitted_fluence', data=self.fluence_vals)
             f.create_dataset('ftobj_fitted', data=optimized_params)
-
 
