@@ -8,7 +8,7 @@ import ast
 from utils import makedata_config
 
 class DataGenerator:
-    def __init__(self, N, NUM_SAMPLES, SHAPE='rect', SCALE=4, SHIFTS=[0,1], FLUENCE=[0,1], SEED=42):
+    def __init__(self, N, NUM_SAMPLES, SHAPE='rect', SCALE=60, SHIFTS=[0.01,1], FLUENCE=[0.1,1], SEED=42):
         self.NUM_SAMPLES = NUM_SAMPLES
         self.SHAPE = SHAPE
         self.SCALE = SCALE
@@ -64,9 +64,8 @@ class DataGenerator:
         np.random.seed(self.SEED)
         random_ = np.random.rand(self.N, self.N)
         random_ = random_ > 0.7
-        #unitc = ndimage.gaussian_filter(random_.astype(float), sigma=(1.75, 1.25), mode='wrap')
         unitc = ndimage.gaussian_filter(random_.astype(float), sigma=(0.7, 0.7), mode='wrap')
-        return unitc, np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(unitc)))
+        return unitc, self.SCALE * np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(unitc)))
 
     def generate_dataset(self):
         # Target Object
@@ -78,7 +77,7 @@ class DataGenerator:
         # Generate Data
         intens_vals = np.zeros((self.NUM_SAMPLES, self.N, self.N))
         for i in range(self.NUM_SAMPLES):
-            intens = self.fluence_vals[i] * np.abs(self.SCALE * funitc + ftobj * self.phase_ramp(self.dx_vals[i], self.dy_vals[i]))**2
+            intens = np.abs(funitc + self.fluence_vals[i] * ftobj * self.phase_ramp(self.dx_vals[i], self.dy_vals[i]))**2
             intens_vals[i] = intens
         return intens_vals, ftobj, funitc, tobj, unitc
 

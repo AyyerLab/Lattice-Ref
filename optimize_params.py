@@ -3,12 +3,11 @@ import h5py
 from utils import get_vals
 import sys
 
-class Optimizer:
-    def __init__(self, N, DATA_FILE, SCALE, ftobj, INIT_ITER):
+class ParamOptimizer:
+    def __init__(self, N, DATA_FILE, ftobj, INIT_ITER):
         self.N = N
         self.cen = N // 2
         self.DATA_FILE = DATA_FILE
-        self.SCALE = SCALE
         self.INIT_ITER = INIT_ITER
         self.ftobj = ftobj
         self.load_dataset()
@@ -31,7 +30,7 @@ class Optimizer:
             dx, dy, fluence = params
             phase = 2.0 * np.pi * (qh * dx + qk * dy)
             pramp = np.exp(1j * phase)
-            model_int = fluence * np.abs(self.SCALE * funitc_vals + ftobj_vals * pramp) ** 2
+            model_int = np.abs(funitc_vals + fluence * ftobj_vals * pramp) ** 2
             error = np.sum((model_int - intens_vals)**2)
             return error
 
@@ -47,7 +46,7 @@ class Optimizer:
 
         phase_grid = 2.0 * np.pi * (qh[:, None] * dx_grid + qk[:, None] * dy_grid)
         pramp_grid = np.exp(1j * phase_grid)
-        model_int_grid = fluence_grid * np.abs(self.SCALE * funitc_vals[:, None] + ftobj_vals[:, None] * pramp_grid) ** 2
+        model_int_grid = np.abs(funitc_vals[:, None] + fluence_grid * ftobj_vals[:, None] * pramp_grid) ** 2
         error_grid = np.sum((model_int_grid - intens_vals[:, None]) ** 2, axis=0)
 
         min_error_idx = np.argmin(error_grid)
@@ -70,7 +69,7 @@ class Optimizer:
 
             phase_fine_grid = 2.0 * np.pi * (qh[:, None] * dx_fine_grid + qk[:, None] * dy_fine_grid)
             pramp_fine_grid = np.exp(1j * phase_fine_grid)
-            model_int_fine_grid = fluence_fine_grid * np.abs(self.SCALE * funitc_vals[:, None] + ftobj_vals[:, None] * pramp_fine_grid) ** 2
+            model_int_fine_grid = np.abs(funitc_vals[:, None] + fluence_fine_grid * ftobj_vals[:, None] * pramp_fine_grid) ** 2
             error_fine_grid = np.sum((model_int_fine_grid - intens_vals[:, None]) ** 2, axis=0)
 
             min_error_fine_idx = np.argmin(error_fine_grid)
