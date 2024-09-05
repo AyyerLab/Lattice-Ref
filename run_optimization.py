@@ -2,93 +2,122 @@ import numpy as np
 import h5py
 import sys
 import os
+from scipy import ndimage
 
 from utils import optim_config
 from optimize_params import ParamOptimizer
 from optimize_ftobj import ObjectOptimizer
 
-#from conj_grad import ConjugateGradientOptimizer
-
-def _init_tobj(rad, size=(127, 127)):
-    obj = np.zeros(size)
-    cen = (size[0] // 2, size[1] // 2)
-    y, x = np.ogrid[:size[0], :size[1]]
-    dcen = np.sqrt((x - cen[1])**2 + (y - cen[0])**2)
-    cmask = dcen <= rad
-    obj[cmask] = 1
-    return obj, np.fft.fftshift(np.fft.fftn(obj))
 
 class OptimizationRunner:
     def __init__(self, config_file):
-        self.N, self.NUM_SAMPLES, self.SCALE, self.SEED, self.INIT_FTOBJ, self.DATA_FILE, self.OUTPUT_FILE = optim_config(config_file)
+        (self.N, self.NUM_SAMPLES, self.SCALE, self.SEED, 
+         self.INIT_FTOBJ_TYPE, self.DATA_FILE, self.OUTPUT_FILE, self.PIXELS) = optim_config(config_file)
+
         self.ftobj = None
 
-    def initialize_ftobj(self):
-        if self.INIT_FTOBJ == 'RD':
+    def init_ftobj(self, npixs, size):
+        obj = np.zeros(size)
+        cen = (size[0] // 2, size[1] // 2)
+        y, x = np.ogrid[:size[0], :size[1]]
+        dcen = np.sqrt((x - cen[1]) ** 2 + (y - cen[0]) ** 2)
+        flat_dcen = dcen.flatten()
+        sorted_indices = np.argsort(flat_dcen)
+        selected_indices = sorted_indices[:npixs]
+        obj.flat[selected_indices] = 1
+        return np.fft.fftshift(np.fft.fftn(obj))
+
+    def get_ftobj(self):
+        # Random Initialization
+        if self.INIT_FTOBJ_TYPE == 'RD':
             self.ftobj = np.random.rand(self.N, self.N) + 1j * np.random.rand(self.N, self.N)
-        elif self.INIT_FTOBJ == 'TS':
+        # True Solution
+        elif self.INIT_FTOBJ_TYPE == 'TS':  # True Solution
             self.ftobj = self.load_ftobj()
-        elif self.INIT_FTOBJ.startswith('CIRCLE'):
-            radius = int(self.INIT_FTOBJ.split('_')[1])
-            circle, ft_circle = _init_tobj(radius, size=(self.N, self.N))
-            self.ftobj = ft_circle
+        # A Circular Object
+        elif self.INIT_FTOBJ_TYPE == 'CR':
+            self.ftobj = self.init_ftobj(self.PIXELS, size=(self.N, self.N))
         else:
-            raise ValueError(f"Unknown INIT_FTOBJ value: {self.INIT_FTOBJ}")
+            raise ValueError(f"Unknown INIT_FTOBJ_TYPE value: {self.INIT_FTOBJ_TYPE}")
 
     def load_ftobj(self):
-        with h5py.File(self.DATA_FILE, 'r') as f:
-            return f['ftobj'][:]
+        with h5py.File(self.DATA_FILE, 'r') as file:
+            return file['ftobj'][:]
 
     def load_true_values(self):
-        with h5py.File(self.DATA_FILE, 'r') as f:
-            fluence = f['fluence'][:]
-            dx = f['shifts'][:,0]
-            dy = f['shifts'][:,1]
+        with h5py.File(self.DATA_FILE, 'r') as file:
+            dx = file['shifts'][:, 0]
+            dy = file['shifts'][:, 1]
+            fluence = file['fluence'][:]
         return dx, dy, fluence
 
-    def run_optimization(self, TH=1e-6, M_ITER=1000, use_true_values=False):
-        self.initialize_ftobj()
-        err = float('inf')
-        INIT_ITER = 1
+    def shrinkwrap(self, ftobj_pred, pixels, sig):
+        invsuppmask = np.ones((self.N,)*2, dtype=np.bool_)
+        amodel = np.abs(np.fft.ifftn(np.fft.ifftshift(ftobj_pred.reshape((self.N,)*2))))
+        famodel = ndimage.gaussian_filter(amodel, sig)
+        thresh = np.sort(famodel.ravel())[amodel.size - pixels]
+        invsuppmask = famodel < thresh
+        amodel[invsuppmask] = 0
+        ftobj_pred = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(amodel)))
+        return ftobj_pred
 
-        if use_true_values:
+
+    def run_optimization(self, TOLERANCE=1e-6, MAX_ITERATIONS=1000, USE_TRUE_VALUES=False):
+        self.get_ftobj()
+
+        curr_error = float('inf')
+        itern = 1
+
+        # Load true values or initialize Shifts/Fluence
+        if USE_TRUE_VALUES:
             dx, dy, fluence = self.load_true_values()
             shifts = np.vstack((dx, dy)).T
         else:
             shifts = None
             fluence = None
 
-        while err > TH and INIT_ITER < M_ITER:
-            if not use_true_values:
-                optimizer = ParamOptimizer(self.N, self.DATA_FILE, self.ftobj, INIT_ITER)
+        while curr_error > TOLERANCE and itern < MAX_ITERATIONS:
+            # Optimize Parameters if not using true values
+            if not USE_TRUE_VALUES:
+                optimizer = ParamOptimizer(self.N, self.DATA_FILE, self.ftobj, itern)
                 fitted_dx, fitted_dy, fitted_fluence, min_error = optimizer.optimize_params()
                 shifts = np.vstack((fitted_dx, fitted_dy)).T
                 fluence = fitted_fluence
-
+            
             sys.stdout.write('\r\033[K')
             sys.stdout.flush()
 
-            grid_optimizer = ObjectOptimizer(self.N, self.DATA_FILE, shifts, fluence, self.OUTPUT_FILE, INIT_ITER)
+            grid_optimizer = ObjectOptimizer(self.N, self.DATA_FILE, shifts, fluence, self.OUTPUT_FILE, itern)
             optimized_ftobj = grid_optimizer.optimize_all_pixels()
-            # cg_optimizer = ConjugateGradientOptimizer(self.N, self.DATA_FILE, self.SCALE, shifts, fluence, self.OUTPUT_FILE, INIT_ITER)
-            # optimized_ftobj = cg_optimizer.optimize_all_pixels()
 
+            
+            ftobj_curr = optimized_ftobj[:, :, 0] + 1j * optimized_ftobj[:, :, 1]
+            if itern % 1 == 0:
+                if itern<50:
+                    sig=5
+                else:
+                    sig=2
+                ftobj_curr = self.shrinkwrap(ftobj_curr, self.PIXELS, sig)
+           
             sys.stdout.write('\r\033[K')
             sys.stdout.flush()
 
-            ftobj_curr = optimized_ftobj[:,:,0] + 1j * optimized_ftobj[:,:,1]
+            error = np.abs(np.abs(self.ftobj) - np.abs(ftobj_curr)) / np.abs(self.ftobj)
+            non_converged_pixels = np.where(error.ravel() > TOLERANCE)[0]
 
-            error = np.abs(np.abs(self.ftobj)-np.abs(ftobj_curr))/np.abs(self.ftobj)
-            pix_idx = np.where(error.ravel()>TH)[0]
-            print(f"ITERATION {INIT_ITER}: ERROR(FTOBJ) = {error.sum()}")
-            print(f"ITERATION {INIT_ITER}: LITPIX = {len(pix_idx)}")
+
+            print(f"Iteration {itern}: Error(FTOBJ) = {error.sum()}")
+            print(f"Iteration {itern}: Non-converged pixels = {len(non_converged_pixels)}")
+
             self.ftobj = ftobj_curr
-            INIT_ITER += 1
-        print("OPTIMIZATION CONVERGED.")
+            curr_error = error.sum()
+            itern += 1
+
+        print("Optimization converged.")
 
 if __name__ == "__main__":
-    config_file = 'config.ini'
-    runner = OptimizationRunner(config_file)
-    use_true_values = True
-    runner.run_optimization(use_true_values=use_true_values)
+    CONFIG_FILE = 'config.ini'
+    runner = OptimizationRunner(CONFIG_FILE)
+    USE_TRUE_VALUES = False
+    runner.run_optimization(USE_TRUE_VALUES=USE_TRUE_VALUES)
 
