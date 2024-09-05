@@ -29,8 +29,8 @@ def optim_config(config_file):
 
     INIT_FTOBJ = config.get('OPTIMIZATION', 'INIT_FTOBJ')
     OUTPUT_FILE = config.get('OPTIMIZATION', 'OUTPUT_FILE')
-
-    return N, NUM_SAMPLES, SCALE, SEED, INIT_FTOBJ, DATA_FILE, OUTPUT_FILE
+    PIXELS = config.getint('OPTIMIZATION', 'PIXELS')
+    return N, NUM_SAMPLES, SCALE, SEED, INIT_FTOBJ, DATA_FILE, OUTPUT_FILE, PIXELS
 
 def get_vals(array, cen, h, k):
     qh = h + cen
