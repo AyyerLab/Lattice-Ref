@@ -1,6 +1,6 @@
-import numpy as np
+import cupy as cp
 import h5py
-from utils import get_vals
+from utils import get_vals  # Assuming this is already GPU-optimized
 import sys
 
 class ParamOptimizer:
@@ -9,47 +9,40 @@ class ParamOptimizer:
         self.cen = N // 2
         self.DATA_FILE = DATA_FILE
         self.INIT_ITER = INIT_ITER
-        self.ftobj = ftobj
+        self.ftobj = cp.asarray(ftobj)  # Convert to GPU array
         self.load_dataset()
 
     def load_dataset(self):
         with h5py.File(self.DATA_FILE, 'r') as f:
-            self.intens_vals = f['intens'][:]
-            self.funitc = f['funitc'][:]
-            self.fluence_vals = f['fluence'][:]
+            self.intens_vals = cp.asarray(f['intens'][:])
+            self.funitc = cp.asarray(f['funitc'][:])
+            self.fluence_vals = cp.asarray(f['fluence'][:])
 
     def analyze_frame(self, intens, hk):
-        funitc_vals = np.array([get_vals(self.funitc, self.cen, *val) for val in hk])
-        ftobj_vals = np.array([get_vals(self.ftobj, self.cen, *val) for val in hk])
-        intens_vals = np.array([get_vals(intens, self.cen, *val) for val in hk])
+        hk = cp.asarray(hk)
+        funitc_vals = cp.array([get_vals(self.funitc, self.cen, *val) for val in hk])
+        ftobj_vals = cp.array([get_vals(self.ftobj, self.cen, *val) for val in hk])
+        intens_vals = cp.array([get_vals(intens, self.cen, *val) for val in hk])
 
-        qh = np.array([h for h, k in hk])
-        qk = np.array([k for h, k in hk])
-
-        def objective(params):
-            dx, dy, fluence = params
-            phase = 2.0 * np.pi * (qh * dx + qk * dy)
-            pramp = np.exp(1j * phase)
-            model_int = np.abs(funitc_vals + fluence * ftobj_vals * pramp) ** 2
-            error = np.sum((model_int - intens_vals)**2)
-            return error
+        qh = cp.array([h for h, k in hk])
+        qk = cp.array([k for h, k in hk])
 
         ncoarse = 300
-        fluence_range = np.linspace(0.1, 10, ncoarse)
-        dx_range = np.linspace(0, 1, ncoarse)
-        dy_range = np.linspace(0, 1, ncoarse)
+        fluence_range = cp.linspace(0.1, 10, ncoarse)
+        dx_range = cp.linspace(0, 1, ncoarse)
+        dy_range = cp.linspace(0, 1, ncoarse)
 
-        dx_grid, dy_grid, fluence_grid = np.meshgrid(dx_range, dy_range, fluence_range, indexing='ij')
+        dx_grid, dy_grid, fluence_grid = cp.meshgrid(dx_range, dy_range, fluence_range, indexing='ij')
         dx_grid = dx_grid.ravel()
         dy_grid = dy_grid.ravel()
         fluence_grid = fluence_grid.ravel()
 
-        phase_grid = 2.0 * np.pi * (qh[:, None] * dx_grid + qk[:, None] * dy_grid)
-        pramp_grid = np.exp(1j * phase_grid)
-        model_int_grid = np.abs(funitc_vals[:, None] + fluence_grid * ftobj_vals[:, None] * pramp_grid) ** 2
-        error_grid = np.sum((model_int_grid - intens_vals[:, None]) ** 2, axis=0)
+        phase_grid = 2.0 * cp.pi * (qh[:, None] * dx_grid + qk[:, None] * dy_grid)
+        pramp_grid = cp.exp(1j * phase_grid)
+        model_int_grid = cp.abs(funitc_vals[:, None] + fluence_grid * ftobj_vals[:, None] * pramp_grid) ** 2
+        error_grid = cp.sum((model_int_grid - intens_vals[:, None]) ** 2, axis=0)
 
-        min_error_idx = np.argmin(error_grid)
+        min_error_idx = cp.argmin(error_grid)
         optimal_params = (dx_grid[min_error_idx], dy_grid[min_error_idx], fluence_grid[min_error_idx])
         min_error = error_grid[min_error_idx]
 
@@ -58,32 +51,32 @@ class ParamOptimizer:
         gsize = 0.05
 
         for _ in range(refinement_steps):
-            dx_fine_range = np.linspace(max(optimal_params[0] - gsize, 0), min(optimal_params[0] + gsize, 1), 10)
-            dy_fine_range = np.linspace(max(optimal_params[1] - gsize, 0), min(optimal_params[1] + gsize, 1), 10)
-            fluence_fine_range = np.linspace(max(optimal_params[2] - gsize * 2, 0.1), min(optimal_params[2] + gsize * 2, 10), 10)
+            dx_fine_range = cp.linspace(max(optimal_params[0].item() - gsize, 0), min(optimal_params[0].item() + gsize, 1), 10)
+            dy_fine_range = cp.linspace(max(optimal_params[1].item() - gsize, 0), min(optimal_params[1].item() + gsize, 1), 10)
+            fluence_fine_range = cp.linspace(max(optimal_params[2].item() - gsize * 2, 0.1), min(optimal_params[2].item() + gsize * 2, 10), 10)
 
-            dx_fine_grid, dy_fine_grid, fluence_fine_grid = np.meshgrid(dx_fine_range, dy_fine_range, fluence_fine_range, indexing='ij')
+            dx_fine_grid, dy_fine_grid, fluence_fine_grid = cp.meshgrid(dx_fine_range, dy_fine_range, fluence_fine_range, indexing='ij')
             dx_fine_grid = dx_fine_grid.ravel()
             dy_fine_grid = dy_fine_grid.ravel()
             fluence_fine_grid = fluence_fine_grid.ravel()
 
-            phase_fine_grid = 2.0 * np.pi * (qh[:, None] * dx_fine_grid + qk[:, None] * dy_fine_grid)
-            pramp_fine_grid = np.exp(1j * phase_fine_grid)
-            model_int_fine_grid = np.abs(funitc_vals[:, None] + fluence_fine_grid * ftobj_vals[:, None] * pramp_fine_grid) ** 2
-            error_fine_grid = np.sum((model_int_fine_grid - intens_vals[:, None]) ** 2, axis=0)
+            phase_fine_grid = 2.0 * cp.pi * (qh[:, None] * dx_fine_grid + qk[:, None] * dy_fine_grid)
+            pramp_fine_grid = cp.exp(1j * phase_fine_grid)
+            model_int_fine_grid = cp.abs(funitc_vals[:, None] + fluence_fine_grid * ftobj_vals[:, None] * pramp_fine_grid) ** 2
+            error_fine_grid = cp.sum((model_int_fine_grid - intens_vals[:, None]) ** 2, axis=0)
 
-            min_error_fine_idx = np.argmin(error_fine_grid)
+            min_error_fine_idx = cp.argmin(error_fine_grid)
             optimal_params_fine = (dx_fine_grid[min_error_fine_idx], dy_fine_grid[min_error_fine_idx], fluence_fine_grid[min_error_fine_idx])
             min_error_fine = error_fine_grid[min_error_fine_idx]
 
-            if np.abs(min_error - min_error_fine) < threshold:
+            if cp.abs(min_error - min_error_fine) < threshold:
                 break
 
             optimal_params = optimal_params_fine
             min_error = min_error_fine
             gsize /= 2
 
-        return optimal_params, min_error
+        return tuple(p.item() for p in optimal_params), min_error.item()
 
     def _optimize_frame(self, frame_idx, hk):
         intens = self.intens_vals[frame_idx]
@@ -122,5 +115,4 @@ class ParamOptimizer:
             ), end='', file=sys.stdout)
             sys.stdout.flush()
 
-        return np.array(fitted_dx), np.array(fitted_dy), np.array(fitted_fluence), np.array(min_error)
-
+        return cp.array(fitted_dx), cp.array(fitted_dy), cp.array(fitted_fluence), cp.array(min_error)
