@@ -1,14 +1,12 @@
 import numpy as np
 from scipy import ndimage
+from scipy.ndimage import map_coordinates
 import h5py
-
-import configparser
-import ast
 
 from utils import makedata_config, do_fft, do_ifft
 
 class DataGenerator:
-    def __init__(self, N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, ADD_NOISE, NOISE_MU, NOISE_K):
+    def __init__(self, N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, ADD_NOISE, NOISE_MU, NOISE_K, ANGLES, APPLY_ORIENTATION=False):
         self.N = N
         self.NUM_SAMPLES = NUM_SAMPLES
         self.SHAPE = SHAPE
@@ -16,6 +14,10 @@ class DataGenerator:
         self.SHIFTS = SHIFTS
         self.FLUENCE = FLUENCE
         self.SEED = SEED
+
+        self.APPLY_ORIENTATION = APPLY_ORIENTATION
+        self.ANGLES = ANGLES
+
         self.ADD_NOISE = ADD_NOISE
         self.NOISE_MU = NOISE_MU
         self.NOISE_K = NOISE_K
@@ -29,6 +31,8 @@ class DataGenerator:
         self.dx_vals = np.random.uniform(SHIFTS[0], SHIFTS[1], size=NUM_SAMPLES)
         self.dy_vals = np.random.uniform(SHIFTS[0], SHIFTS[1], size=NUM_SAMPLES)
         self.fluence_vals = np.random.uniform(FLUENCE[0], FLUENCE[1], size=NUM_SAMPLES)
+        if APPLY_ORIENTATION:
+            self.rotate_vals = np.random.uniform(ANGLES[0], ANGLES[1], size=NUM_SAMPLES)
 
     def target_obj(self):
         size = self.N
@@ -55,8 +59,17 @@ class DataGenerator:
     def phase_ramp(self, shiftx, shifty):
         return np.exp(1j * 2.0 * np.pi * (self.qh * shiftx + self.qk * shifty))
 
+    def rotate_ft(self, ftobj, angle_deg):
+        angle_rad = np.deg2rad(angle_deg) 
+        qh_rot = np.cos(angle_rad) * self.qh - np.sin(angle_rad) * self.qk
+        qk_rot = np.sin(angle_rad) * self.qh + np.cos(angle_rad) * self.qk    
+        coords = np.array([qh_rot + self.cen, qk_rot + self.cen]) 
+        rotated_ft = map_coordinates(np.abs(ftobj), coords, order=3, mode='wrap') 
+
+        return rotated_ft
+
     def unit_cell(self):
-        np.random.seed(SEED)
+        np.random.seed(self.SEED)
         random_ = np.random.rand(self.N, self.N)
         random_ = random_ > 0.7
         unitc = ndimage.gaussian_filter(random_.astype(float), sigma=(0.7, 0.7), mode='wrap')
@@ -72,38 +85,53 @@ class DataGenerator:
 
         # Generate Data
         intens_vals = np.zeros((self.NUM_SAMPLES, self.N, self.N))
+        rotated_ftobjs = []
+
         for i in range(self.NUM_SAMPLES):
             shiftx = self.dx_vals[i]
             shifty = self.dy_vals[i]
             fluence = self.fluence_vals[i]
             phase = self.phase_ramp(shiftx, shifty)
-            obj_ft = fluence * ftobj * phase
+            
+            if self.APPLY_ORIENTATION:
+                ftobj_rot = self.rotate_ft(ftobj, self.rotate_vals[i])
+                obj_ft = fluence * ftobj_rot * phase
+                rotated_ftobjs.append(ftobj_rot)
+            else:
+                obj_ft = fluence * ftobj * phase
+
             intens = np.abs(funitc + obj_ft)**2
 
             if self.ADD_NOISE:
                 noise_sigma = self.NOISE_K * np.sqrt(intens.max())
-                np.random.seed(SEED)
+                np.random.seed(self.SEED)
                 noise = np.random.normal(loc=self.NOISE_MU, scale=noise_sigma, size=intens.shape)
                 intens += noise
 
             intens_vals[i] = intens
 
-        return intens_vals, ftobj, funitc, tobj, unitc
+        return intens_vals, ftobj, funitc, tobj, unitc, rotated_ftobjs
 
     def save_data(self, filename):
-        intens_vals, ftobj, funitc, tobj, unitc = self.generate_dataset()
+        intens_vals, ftobj, funitc, tobj, unitc, rotated_ftobjs = self.generate_dataset()
         with h5py.File(filename, 'w') as f:
             f.create_dataset('intens', data=intens_vals)
-            f.create_dataset('ftobj', data=ftobj)
-            f.create_dataset('tobj', data=tobj)
             f.create_dataset('funitc', data=funitc)
+            f.create_dataset('tobj', data=tobj)
             f.create_dataset('unitc', data=unitc)
             f.create_dataset('shifts', data=np.vstack((self.dx_vals, self.dy_vals)).T)
             f.create_dataset('fluence', data=self.fluence_vals)
 
+            if self.APPLY_ORIENTATION:
+                f.create_dataset('rotated_ftobjs', data=np.array(rotated_ftobjs))
+                f.create_dataset('angle', data=self.rotate_vals)
+                f.create_dataset('ftobj', data=ftobj)
+            else:
+                f.create_dataset('ftobj', data=ftobj)
+
 if __name__ == "__main__":
     config_file = 'config.ini'
-    N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, DATA_FILE, ADD_NOISE, NOISE_MU, NOISE_K = makedata_config(config_file)
-    generator = DataGenerator(N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, ADD_NOISE, NOISE_MU, NOISE_K)
+    N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, DATA_FILE, ADD_NOISE, NOISE_MU, NOISE_K, ANGLES, APPLY_ORIENTATION = makedata_config(config_file)
+    generator = DataGenerator(N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, ADD_NOISE, NOISE_MU, NOISE_K, ANGLES, APPLY_ORIENTATION)
     generator.save_data(DATA_FILE)
 
