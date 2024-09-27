@@ -1,7 +1,7 @@
 import cupy as cp
 import h5py
 import sys
-
+from cupyx.scipy.ndimage import map_coordinates  # Use cupyx for efficient GPU processing
 from utils import get_vals
 
 class ParamOptimizer:
@@ -17,6 +17,21 @@ class ParamOptimizer:
         with h5py.File(self.DATA_FILE, 'r') as f:
             self.intens_vals = cp.asarray(f['intens'])
             self.funitc = cp.asarray(f['funitc'])
+            self.angles = cp.asarray(f['angle'])  # Load the angles from the dataset
+
+    def rotate_ft(self, ftobj, angle_deg):
+        """ Rotate the Fourier transform object in cupy using cupyx map_coordinates """
+        angle_rad = cp.deg2rad(angle_deg)
+        qh, qk = cp.indices((self.N, self.N))
+        qh = qh - self.cen
+        qk = qk - self.cen
+        qh_rot = cp.cos(angle_rad) * qh - cp.sin(angle_rad) * qk
+        qk_rot = cp.sin(angle_rad) * qh + cp.cos(angle_rad) * qk
+        coords = cp.array([qh_rot + self.cen, qk_rot + self.cen])
+        
+        # Use cupyx's map_coordinates for GPU-accelerated interpolation
+        rotated_ft = map_coordinates(cp.abs(ftobj), coords, order=3, mode='wrap')
+        return rotated_ft
 
     def grid_search(self, qh, qk, funitc_vals, ftobj_vals, intens_vals, dx_range, dy_range, fluence_range):
         dx_grid, dy_grid, fluence_grid = cp.meshgrid(dx_range, dy_range, fluence_range, indexing='ij')
@@ -36,12 +51,11 @@ class ParamOptimizer:
 
         return optimal_params, min_error
 
-    def analyze_frame(self, intens, hk):
+    def analyze_frame(self, intens, hk, angle):
         hk = cp.array(hk)
         qh, qk = hk[:, 0], hk[:, 1]
 
         funitc_vals = get_vals(self.funitc, self.cen, qh, qk)
-        ftobj_vals = get_vals(self.ftobj, self.cen, qh, qk)
         intens_vals = get_vals(intens, self.cen, qh, qk)
 
         # Initial coarse grid search
@@ -49,6 +63,10 @@ class ParamOptimizer:
         dx_range = cp.linspace(0, 1, ncoarse)
         dy_range = cp.linspace(0, 1, ncoarse)
         fluence_range = cp.linspace(0.1, 10, ncoarse)
+
+        # Rotate ftobj using the provided angle for this frame
+        rotated_ftobj = self.rotate_ft(self.ftobj, angle)
+        ftobj_vals = get_vals(rotated_ftobj, self.cen, qh, qk)
 
         optimal_params, min_error = self.grid_search(
             qh, qk, funitc_vals, ftobj_vals, intens_vals, dx_range, dy_range, fluence_range
@@ -82,7 +100,8 @@ class ParamOptimizer:
         results = []
         for frame_idx in range(num_frames):
             intens = self.intens_vals[frame_idx]
-            optimal_params, error = self.analyze_frame(intens, hk)
+            angle = self.angles[frame_idx]  # Use the loaded angle for each frame
+            optimal_params, error = self.analyze_frame(intens, hk, angle)
             dx, dy, fluence = optimal_params
             results.append({
                 'dx': dx % 1,
@@ -92,7 +111,7 @@ class ParamOptimizer:
             })
             print(
                 f"ITER {self.INIT_ITER}: FRAME {frame_idx + 1}/{num_frames}: "
-                f"Dx={dx:.3f}, Dy={dy:.3f}, Fluence={fluence:.3f}, Error={error:.3e}",
+                f"Dx={dx:.3f}, Dy={dy:.3f}, Fluence={fluence:.3f}, Error={error:.3e}, Angle={angle:.2f}",
                 flush=True
             )
 

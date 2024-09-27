@@ -1,101 +1,109 @@
-import cupy as cp
-import h5py
+import numpy as np
+from scipy import ndimage
 from scipy.ndimage import map_coordinates
-from utils import get_vals
+import configparser
+import h5py
 
-class OrientOptimizer:
-    def __init__(self, N, DATA_FILE, ftobj, hk):
+class OrientationOptimizer:
+    def __init__(self, N, DATA_FILE):
         self.N = N
         self.cen = N // 2
+        self.qh, self.qk = np.indices((N, N))
+        self.qh -= self.cen
+        self.qk -= self.cen
+
+        self.hk = np.array([(0, 1), (1, 1), (1, 0), (1, -1)])  # Using array for vectorization
+
         self.DATA_FILE = DATA_FILE
-        self.ftobj = cp.asarray(ftobj)
-        self.hk = hk
         self.load_dataset()
 
     def load_dataset(self):
         with h5py.File(self.DATA_FILE, 'r') as f:
-            self.intens_vals = cp.asarray(f['intens'])
-            self.funitc = cp.asarray(f['funitc'])
+            self.fluence = f['fluence'][:]
+            self.shifts = f['shifts'][:]
+            self.ftobj = f['ftobj'][:]
+            self.funitc = f['funitc'][:]
+            self.intens_vals = f['intens'][:]
 
-        qh, qk = cp.indices((self.N, self.N))
-        self.qh = qh - self.cen
-        self.qk = qk - self.cen
+        self.num_samples = len(self.fluence)
+        self.fine_step_size = 0.01
 
     def rotate_ft(self, ftobj, angle_deg):
-        angle_rad = cp.deg2rad(angle_deg)
-        qh_rot = cp.cos(angle_rad) * self.qh - cp.sin(angle_rad) * self.qk
-        qk_rot = cp.sin(angle_rad) * self.qh + cp.cos(angle_rad) * self.qk
-        coords = cp.array([qh_rot + self.cen, qk_rot + self.cen])
-        rotated_ft = map_coordinates(cp.abs(ftobj).get(), coords.get(), order=3, mode='wrap')
-        return cp.asarray(rotated_ft)
+        angle_rad = np.deg2rad(angle_deg)
+        qh_rot = np.cos(angle_rad) * self.qh - np.sin(angle_rad) * self.qk
+        qk_rot = np.sin(angle_rad) * self.qh + np.cos(angle_rad) * self.qk
+        coords = np.array([qh_rot + self.cen, qk_rot + self.cen])
+        rotated_ft = map_coordinates(np.abs(ftobj), coords, order=3, mode='wrap')
+        return rotated_ft
 
-    def grid_search_theta(self, qh, qk, dx, dy, fluence, funitc_vals, intens_vals_sample, ftobj_vals):
-        # Coarse grid search for theta
-        ncoarse = 20
-        theta_range = cp.linspace(0, 180, ncoarse)
-        min_error = cp.inf
-        optimal_theta = 0
+    def _getvals(self, array, h, k):
+        qh = h + self.cen
+        qk = k + self.cen
+        return array[qh, qk]
 
-        for theta in theta_range:
-            error = self.objective(theta, dx, dy, fluence, funitc_vals, intens_vals_sample, ftobj_vals)
-            if error < min_error:
-                min_error = error
-                optimal_theta = theta
+    def optimize_orientation(self):
+        optimal_thetas = np.zeros(self.num_samples)
 
-        # Fine grid search around the optimal theta
-        gsize = 0.01
-        theta_fine_range = cp.arange(max(optimal_theta - 5, 0), min(optimal_theta + 5, 180), gsize)
-        for theta in theta_fine_range:
-            error = self.objective(theta, dx, dy, fluence, funitc_vals, intens_vals_sample, ftobj_vals)
-            if error < min_error:
-                min_error = error
-                optimal_theta = theta
+        for i in range(self.num_samples):
+            dx = self.shifts[:, 0][i]
+            dy = self.shifts[:, 1][i]
+            fluence = self.fluence[i]
+            intens_sample = self.intens_vals[i]
 
-        return optimal_theta, min_error
+            # Precompute constant values for this sample
+            funitc_vals = np.array([self._getvals(self.funitc, h, k) for h, k in self.hk])
+            intens_vals_sample = np.array([self._getvals(intens_sample, h, k) for h, k in self.hk])
 
-    def objective(self, theta, dx, dy, fluence, funitc_vals, intens_vals_sample, ftobj_vals):
-        rotated_ftobj = self.rotate_ft(ftobj_vals, theta)
-        phase_grid = 2 * cp.pi * (self.qh * dx + self.qk * dy)
-        pramp = cp.exp(1j * phase_grid)
+            def objective_theta(theta):
+                # Rotation and phase calculations
+                rotated_ftobj = self.rotate_ft(self.ftobj, theta)
+                qh = self.hk[:, 0]
+                qk = self.hk[:, 1]
+                phase = 2.0 * np.pi * (qh * dx + qk * dy)
+                pramp = np.exp(1j * phase)
 
-        model_intensity = cp.abs(funitc_vals + fluence * rotated_ftobj * pramp) ** 2
-        error = cp.sum((model_intensity - intens_vals_sample) ** 2)
+                # Compute model intensities
+                rotated_vals = np.array([self._getvals(rotated_ftobj, h, k) for h, k in self.hk])
+                model_int = np.abs(funitc_vals + fluence * rotated_vals * pramp)**2
 
-        return error
+                # Error calculation
+                error = np.sum((model_int - intens_vals_sample) ** 2)
+                return error
 
-    def analyze_frame(self, intens, dx, dy, fluence):
-        hk = cp.array(self.hk)
-        qh, qk = hk[:, 0], hk[:, 1]
+            # Coarse optimization
+            ncoarse = 20
+            theta_coarse_range = np.linspace(0, 180, ncoarse)
+            min_error = np.finfo('f8').max
+            optimal_theta = 0
+            for theta in theta_coarse_range:
+                objective_value = objective_theta(theta)
+                if objective_value < min_error:
+                    min_error = objective_value
+                    optimal_theta = theta
 
-        funitc_vals = get_vals(self.funitc, self.cen, qh, qk)
-        ftobj_vals = get_vals(self.ftobj, self.cen, qh, qk)
-        intens_vals_sample = get_vals(intens, self.cen, qh, qk)
+            # Fine optimization
+            theta_fine_range = np.arange(max(optimal_theta - 5, 0), min(optimal_theta + 5, 180), self.fine_step_size)
+            min_error_fine = np.finfo('f8').max
+            optimal_theta_fine = optimal_theta
+            for theta in theta_fine_range:
+                objective_value = objective_theta(theta)
+                if objective_value < min_error_fine:
+                    min_error_fine = objective_value
+                    optimal_theta_fine = theta
 
-        optimal_theta, min_error = self.grid_search_theta(qh, qk, dx, dy, fluence, funitc_vals, intens_vals_sample, ftobj_vals)
+            optimal_thetas[i] = optimal_theta_fine
+            print(f"Sample {i}: Optimal theta: {optimal_theta_fine}")
 
-        return optimal_theta, min_error
+        return optimal_thetas
 
-    def optimize_orientations(self, dx_vals, dy_vals, fluence_vals):
-        num_frames = self.intens_vals.shape[0]
 
-        results = []
-        for frame_idx in range(num_frames):
-            intens = self.intens_vals[frame_idx]
-            dx, dy, fluence = dx_vals[frame_idx], dy_vals[frame_idx], fluence_vals[frame_idx]
+if __name__ == "__main__":
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+    N = int(config['DATA_GENERATION']['N'])
+    DATA_FILE = config['DATA_GENERATION']['DATA_FILE']
 
-            optimal_theta, error = self.analyze_frame(intens, dx, dy, fluence)
-            results.append({
-                'theta': optimal_theta,
-                'error': error
-            })
-            print(
-                f"FRAME {frame_idx + 1}/{num_frames}: "
-                f"Theta={optimal_theta:.3f}, Error={error:.3e}",
-                flush=True
-            )
-
-        fitted_thetas = cp.array([res['theta'] for res in results])
-        min_errors = cp.array([res['error'] for res in results])
-
-        return fitted_thetas, min_errors
+    optimizer = OrientationOptimizer(N, DATA_FILE)
+    optimal_thetas = optimizer.optimize_orientation()
+    print("Optimal Thetas:", optimal_thetas)
 
