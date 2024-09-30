@@ -43,11 +43,14 @@ class OptimizationRunner:
         else:
             raise ValueError(f"Unknown INIT_FTOBJ_TYPE: {self.INIT_FTOBJ_TYPE}")
 
+
     def shrinkwrap(self, ftobj_pred, sig):
-        amodel = cp.abs(self.do_ifft(ftobj_pred))
-        amodel = ndimage.gaussian_filter(amodel, sig)
-        thresh = cp.sort(amodel.ravel())[-self.PIXELS]
-        amodel[amodel < thresh] = 0
+        invsuppmask = cp.ones((self.N,)*2, dtype=cp.bool_)
+        amodel = cp.abs(self.do_ifft(ftobj_pred.reshape((self.N,)*2)))
+        famodel = ndimage.gaussian_filter(amodel, sig)
+        thresh = cp.sort(famodel.ravel())[amodel.size - self.PIXELS]
+        invsuppmask = famodel < thresh
+        amodel[invsuppmask] = 0
         return self.do_fft(amodel)
 
     def run_optimization(self, NUM_ITER=None, USE_TRUE_VALUES=False):
@@ -74,7 +77,7 @@ class OptimizationRunner:
             optimized_ftobj = grid_optimizer.optimize_all_pixels()
             ftobj_curr = optimized_ftobj
             if itern>=50:
-                sig = 5 if itern < 50 else 2
+                sig = 5 if itern < 100 else 2
                 ftobj_curr = self.shrinkwrap(ftobj_curr, sig)
 
             denominator = cp.abs(self.ftobj)
