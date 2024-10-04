@@ -100,6 +100,7 @@ class DataGenerator:
             f.create_dataset('unitc', data=unitc)
             f.create_dataset('shifts', data=np.vstack((self.dx_vals, self.dy_vals)).T)
             f.create_dataset('fluence', data=self.fluence_vals)
+            f.create_dataset('noise_k', data=self.NOISE_K)
 
 if __name__ == "__main__":
     config_file = 'config.ini'
