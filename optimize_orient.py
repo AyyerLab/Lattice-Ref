@@ -12,7 +12,7 @@ class OrientationOptimizer:
         self.qh -= self.cen
         self.qk -= self.cen
 
-        self.hk = np.array([(0, 1), (1, 1), (1, 0), (1, -1)])  # Using array for vectorization
+        self.hk = np.array([(0, 1), (1, 1), (1, 0), (1, -1)])
 
         self.DATA_FILE = DATA_FILE
         self.load_dataset()
@@ -50,23 +50,19 @@ class OrientationOptimizer:
             fluence = self.fluence[i]
             intens_sample = self.intens_vals[i]
 
-            # Precompute constant values for this sample
             funitc_vals = np.array([self._getvals(self.funitc, h, k) for h, k in self.hk])
             intens_vals_sample = np.array([self._getvals(intens_sample, h, k) for h, k in self.hk])
 
             def objective_theta(theta):
-                # Rotation and phase calculations
                 rotated_ftobj = self.rotate_ft(self.ftobj, theta)
                 qh = self.hk[:, 0]
                 qk = self.hk[:, 1]
                 phase = 2.0 * np.pi * (qh * dx + qk * dy)
                 pramp = np.exp(1j * phase)
 
-                # Compute model intensities
                 rotated_vals = np.array([self._getvals(rotated_ftobj, h, k) for h, k in self.hk])
                 model_int = np.abs(funitc_vals + fluence * rotated_vals * pramp)**2
 
-                # Error calculation
                 error = np.sum((model_int - intens_vals_sample) ** 2)
                 return error
 

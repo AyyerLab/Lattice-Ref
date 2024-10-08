@@ -1,95 +1,117 @@
-import cupy as cp
+import numpy as np
 import h5py
 import sys
+import configparser
+from scipy import ndimage
 
 from utils import get_vals
 
 class ObjectOptimizer:
-    def __init__(self, N, DATA_FILE, shifts, fluence_vals, OUTPUT_FILE, iteration, prev_ftobj):
+    def __init__(self, N, DATA_FILE, OUTPUT_FILE, INIT_FTOBJ_TYPE, PIXELS):
         self.N = N
         self.cen = N // 2
         self.DATA_FILE = DATA_FILE
         self.OUTPUT_FILE = OUTPUT_FILE
-        self.iteration = iteration
-        self.prev_ftobj = cp.asarray(prev_ftobj)
-        self.shifts = cp.asarray(shifts)
-        self.fluence_vals = cp.asarray(fluence_vals)
+        self.INIT_FTOBJ_TYPE = INIT_FTOBJ_TYPE
+        self.PIXELS = PIXELS
 
         self.load_dataset()
+        self.get_ftobj()
 
     def load_dataset(self):
         with h5py.File(self.DATA_FILE, 'r') as f:
-            self.intens_vals = cp.asarray(f['intens'])
-            self.funitc = cp.asarray(f['funitc'])
+            self.intens_vals = np.asarray(f['intens'])
+            self.funitc = np.asarray(f['funitc'])
+            self.shifts = np.asarray(f['shifts'])
+            self.fluence_vals = np.asarray(f['fluence'])
+            self.angles = np.asarray(f['angle'])  # Fix to match dataset key
             self.num_samples = self.intens_vals.shape[0]
+
+    def do_fft(self, obj):
+        return np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(obj)))
+
+    def init_ftobj(self):
+        size = (self.N, self.N)
+        obj = np.zeros(size)
+        cen = (self.N // 2, self.N // 2)
+        y, x = np.ogrid[:self.N, :self.N]
+        dcen = np.sqrt((x - cen[1])**2 + (y - cen[0])**2)
+        obj.ravel()[np.argsort(dcen.ravel())[:self.PIXELS]] = 1
+        self.ftobj = self.do_fft(obj)
+
+    def get_ftobj(self):
+        if self.INIT_FTOBJ_TYPE == 'RD':
+            self.ftobj = np.random.rand(self.N, self.N) + 1j * np.random.rand(self.N, self.N)
+        elif self.INIT_FTOBJ_TYPE == 'TS':
+            with h5py.File(self.DATA_FILE, 'r') as file:
+                self.ftobj = np.asarray(file['ftobj'][:])
+        elif self.INIT_FTOBJ_TYPE == 'CR':
+            self.init_ftobj()
+        else:
+            raise ValueError(f"Unknown INIT_FTOBJ_TYPE: {self.INIT_FTOBJ_TYPE}")
+
+    def rotate_ft(self, ftobj, angle_deg):
+        angle_rad = np.deg2rad(angle_deg)
+        qh, qk = np.indices((self.N, self.N))
+        qh -= self.cen
+        qk -= self.cen
+
+        qh_rot = np.cos(angle_rad) * qh - np.sin(angle_rad) * qk
+        qk_rot = np.sin(angle_rad) * qh + np.cos(angle_rad) * qk
+
+        coords = np.array([qh_rot + self.cen, qk_rot + self.cen])
+        rotated_ft = ndimage.map_coordinates(np.abs(ftobj), coords, order=3, mode='wrap')
+        return rotated_ft
 
     def optimize_pixel(self, h, k):
         funitc_val = get_vals(self.funitc, self.cen, h, k)
         intens_vals = self.intens_vals[:, h + self.cen, k + self.cen]
-        phases = 2 * cp.pi * (h * self.shifts[:, 0] + k * self.shifts[:, 1])
-        pramp = cp.exp(1j * phases)
+        phases = 2 * np.pi * (h * self.shifts[:, 0] + k * self.shifts[:, 1])
+        pramp = np.exp(1j * phases)
 
-        def objective(ftobj_vals):
-            F = funitc_val + self.fluence_vals[:, cp.newaxis] * ftobj_vals * pramp[:, cp.newaxis]
-            model_int = cp.abs(F) ** 2
-            residuals = model_int - intens_vals[:, cp.newaxis]
-            return cp.sum(residuals ** 2, axis=0)
+        def objective(theta):
+            # Rotate the full ftobj, not just a single pixel
+            rotated_ftobj = self.rotate_ft(self.ftobj, theta)
+            rotated_val = rotated_ftobj[h + self.cen, k + self.cen]  # Extract the value after rotation
+            F = funitc_val + self.fluence_vals[:, np.newaxis] * rotated_val * pramp[:, np.newaxis]
+            model_int = np.abs(F) ** 2
+            residuals = model_int - intens_vals[:, np.newaxis]
+            return np.sum(residuals ** 2, axis=0)
 
-        # Coarse grid search
-        real_vals = cp.linspace(-2000, 2000, 200)
-        imag_vals = cp.linspace(-2000, 2000, 200)
-        real_grid, imag_grid = cp.meshgrid(real_vals, imag_vals)
-        ftobj_vals = (real_grid + 1j * imag_grid).ravel()
+        # Coarse grid search for orientation
+        ncoarse = 20
+        theta_coarse_range = np.linspace(0, 180, ncoarse)
+        min_error = np.finfo('f8').max
+        optimal_theta = 0
 
-        errors = objective(ftobj_vals)
-        min_idx = cp.argmin(errors)
-        best_ftobj = ftobj_vals[min_idx]
-        min_error = errors[min_idx]
+        for theta in theta_coarse_range:
+            error = objective(theta)
+            if error < min_error:
+                min_error = error
+                optimal_theta = theta
 
-        # Refinement
-        gsize = 200
-        threshold = 1e-8
-        max_refinements = 1000
+        # Fine optimization of theta
+        theta_fine_range = np.arange(max(optimal_theta - 5, 0), min(optimal_theta + 5, 180), 0.1)
+        min_error_fine = np.finfo('f8').max
+        best_ftobj = None
 
-        for _ in range(max_refinements):
-            real_range = cp.linspace(best_ftobj.real - gsize, best_ftobj.real + gsize, 10)
-            imag_range = cp.linspace(best_ftobj.imag - gsize, best_ftobj.imag + gsize, 10)
-            real_grid, imag_grid = cp.meshgrid(real_range, imag_range)
-            ftobj_vals = (real_grid + 1j * imag_grid).ravel()
-
-            errors = objective(ftobj_vals)
-            min_idx = cp.argmin(errors)
-            new_best_ftobj = ftobj_vals[min_idx]
-            new_min_error = errors[min_idx]
-
-            if cp.abs(min_error - new_min_error) < threshold:
-                break
-
-            best_ftobj = new_best_ftobj
-            min_error = new_min_error
-            gsize /= 2
+        for theta in theta_fine_range:
+            error = objective(theta)
+            if error < min_error_fine:
+                min_error_fine = error
+                best_ftobj = self.ftobj[h + self.cen, k + self.cen]  # Store the best ftobj value
 
         return best_ftobj
 
     def optimize_all_pixels(self):
-        # Determine the pixels to optimize
-        if self.iteration <= 50:
-            radius = 30
-            h_vals = cp.arange(-self.cen, self.cen + 1)
-            k_vals = cp.arange(-self.cen, self.cen + 1)
-            h_grid, k_grid = cp.meshgrid(h_vals, k_vals)
-            mask = cp.sqrt(h_grid**2 + k_grid**2) <= radius
-            h_indices = h_grid[mask]
-            k_indices = k_grid[mask]
-        else:
-            h_indices = cp.arange(-self.cen, self.cen + 1)
-            k_indices = cp.arange(-self.cen, self.cen + 1)
-            h_indices, k_indices = cp.meshgrid(h_indices, k_indices)
-            h_indices = h_indices.ravel()
-            k_indices = k_indices.ravel()
+        h_indices = np.arange(-self.cen, self.cen + 1)
+        k_indices = np.arange(-self.cen, self.cen + 1)
+        h_indices, k_indices = np.meshgrid(h_indices, k_indices)
+        h_indices = h_indices.ravel()
+        k_indices = k_indices.ravel()
 
         total_pixels = h_indices.size
-        optimized_params = self.prev_ftobj.copy()
+        optimized_params = self.ftobj.copy()
 
         for idx in range(total_pixels):
             h = int(h_indices[idx])
@@ -106,13 +128,23 @@ class ObjectOptimizer:
         print(f"\rOptimized {count}/{total} pixels ({progress:.2f}%)", end='', flush=True)
 
     def save_results(self, optimized_params):
-        output_file = self.OUTPUT_FILE.replace('.h5', f'{self.iteration:03}.h5')
+        output_file = self.OUTPUT_FILE  # Removed the iteration replacement logic
 
         with h5py.File(output_file, 'w') as f:
-            f.create_dataset('fitted_dx', data=cp.asnumpy(self.shifts[:, 0]))
-            f.create_dataset('fitted_dy', data=cp.asnumpy(self.shifts[:, 1]))
-            f.create_dataset('fitted_fluence', data=cp.asnumpy(self.fluence_vals))
-            f.create_dataset('ftobj_fitted', data=cp.asnumpy(optimized_params))
+            f.create_dataset('ftobj_fitted', data=np.asarray(optimized_params))
 
         print(f"\nResults saved to {output_file}")
+
+if __name__ == "__main__":
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+
+    N = int(config['DATA_GENERATION']['N'])
+    DATA_FILE = config['DATA_GENERATION']['DATA_FILE']
+    OUTPUT_FILE = config['OPTIMIZATION']['OUTPUT_FILE']
+    INIT_FTOBJ_TYPE = config['OPTIMIZATION']['INIT_FTOBJ']
+    PIXELS = int(config['OPTIMIZATION']['PIXELS'])
+
+    optimizer = ObjectOptimizer(N, DATA_FILE, OUTPUT_FILE, INIT_FTOBJ_TYPE, PIXELS)
+    optimizer.optimize_all_pixels()
 
