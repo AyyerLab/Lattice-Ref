@@ -3,7 +3,6 @@ import h5py
 from cupyx.scipy import ndimage
 import configparser
 
-
 from utils import optim_config
 from optimize_params import ParamOptimizer
 from optimize_ftobj import ObjectOptimizer
@@ -15,6 +14,7 @@ class OptimizationRunner:
 
         self.N, _, _, _, self.INIT_FTOBJ_TYPE, self.DATA_FILE, self.OUTPUT_FILE, self.PIXELS = optim_config(config_file)
         self.NUM_ITERATION = int(self.config['OPTIMIZATION']['NUM_ITERATION'])
+        self.USE_SHRINKWRAP = self.config['OPTIMIZATION'].getboolean('USE_SHRINKWRAP', fallback=True)
         self.ftobj = None
 
     def do_fft(self, obj):
@@ -42,7 +42,6 @@ class OptimizationRunner:
             self.init_ftobj()
         else:
             raise ValueError(f"Unknown INIT_FTOBJ_TYPE: {self.INIT_FTOBJ_TYPE}")
-
 
     def shrinkwrap(self, ftobj_pred, sig):
         invsuppmask = cp.ones((self.N,)*2, dtype=cp.bool_)
@@ -76,8 +75,9 @@ class OptimizationRunner:
             grid_optimizer = ObjectOptimizer(self.N, self.DATA_FILE, shifts, fluence, self.OUTPUT_FILE, itern, self.ftobj)
             optimized_ftobj = grid_optimizer.optimize_all_pixels()
             ftobj_curr = optimized_ftobj
-            if itern>=50:
-                sig = 5 if itern < 100 else 2
+            
+            if self.USE_SHRINKWRAP and itern >= 50 and itern % 5 == 0:
+                sig = 2
                 ftobj_curr = self.shrinkwrap(ftobj_curr, sig)
 
             denominator = cp.abs(self.ftobj)
