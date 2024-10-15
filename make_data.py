@@ -16,6 +16,7 @@ class DataGenerator:
         self.SHIFTS = SHIFTS
         self.FLUENCE = FLUENCE
         self.SEED = SEED
+
         self.ADD_NOISE = ADD_NOISE
         self.NOISE_MU = NOISE_MU
         self.NOISE_K = NOISE_K
