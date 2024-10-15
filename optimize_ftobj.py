@@ -5,24 +5,29 @@ import sys
 from utils import get_vals
 
 class ObjectOptimizer:
-    def __init__(self, N, DATA_FILE, shifts, fluence_vals, OUTPUT_FILE, iteration, prev_ftobj):
+    def __init__(self, i, N, shifts, fluence, ftobj, data_file, output_file):
         self.N = N
         self.cen = N // 2
-        self.DATA_FILE = DATA_FILE
-        self.OUTPUT_FILE = OUTPUT_FILE
-        self.iteration = iteration
-        self.prev_ftobj = cp.asarray(prev_ftobj)
-        self.shifts = cp.asarray(shifts)
-        self.fluence_vals = cp.asarray(fluence_vals)
 
+        self.DATA_FILE = data_file
+        self.OUTPUT_FILE = output_file
+
+        self.ITER = i
+        self.shifts = cp.asarray(shifts)
+        self.fluence_vals = cp.asarray(fluence)
+        self.prev_ftobj = cp.asarray(ftobj)
+
+        self.SWITCH_TO_ALLPIX = 50
         self.load_dataset()
 
     def load_dataset(self):
+        # Load Dataset
         with h5py.File(self.DATA_FILE, 'r') as f:
             self.intens_vals = cp.asarray(f['intens'])
             self.funitc = cp.asarray(f['funitc'])
             self.num_samples = self.intens_vals.shape[0]
 
+    # GRID SEARCH for each pixel
     def optimize_pixel(self, h, k):
         funitc_val = get_vals(self.funitc, self.cen, h, k)
         intens_vals = self.intens_vals[:, h + self.cen, k + self.cen]
@@ -72,8 +77,7 @@ class ObjectOptimizer:
         return best_ftobj
 
     def optimize_all_pixels(self):
-        # Determine the pixels to optimize
-        if self.iteration <= 50:
+        if self.ITER < self.SWITCH_TO_ALLPIX:
             radius = 30
             h_vals = cp.arange(-self.cen, self.cen + 1)
             k_vals = cp.arange(-self.cen, self.cen + 1)
@@ -98,21 +102,8 @@ class ObjectOptimizer:
             optimized_params[h + self.cen, k + self.cen] = best_ftobj
             self._print_progress(idx + 1, total_pixels)
 
-        self.save_results(optimized_params)
         return optimized_params
 
     def _print_progress(self, count, total):
         progress = (count / total) * 100
         print(f"\rOptimized {count}/{total} pixels ({progress:.2f}%)", end='', flush=True)
-
-    def save_results(self, optimized_params):
-        output_file = self.OUTPUT_FILE.replace('.h5', f'{self.iteration:03}.h5')
-
-        with h5py.File(output_file, 'w') as f:
-            f.create_dataset('fitted_dx', data=cp.asnumpy(self.shifts[:, 0]))
-            f.create_dataset('fitted_dy', data=cp.asnumpy(self.shifts[:, 1]))
-            f.create_dataset('fitted_fluence', data=cp.asnumpy(self.fluence_vals))
-            f.create_dataset('ftobj_fitted', data=cp.asnumpy(optimized_params))
-
-        print(f"\nResults saved to {output_file}")
-
