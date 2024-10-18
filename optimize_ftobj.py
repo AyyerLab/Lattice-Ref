@@ -5,20 +5,20 @@ import sys
 from utils import get_vals
 
 class ObjectOptimizer:
-    def __init__(self, i, N, shifts, fluence, ftobj, data_file, output_file):
+    def __init__(self, itern, N, shifts, fluence, ftobj, data_file, output_file):
         self.N = N
         self.cen = N // 2
 
         self.DATA_FILE = data_file
         self.OUTPUT_FILE = output_file
 
-        self.ITER = i
+        self.ITER = itern
         self.shifts = cp.asarray(shifts)
         self.fluence_vals = cp.asarray(fluence)
         self.prev_ftobj = cp.asarray(ftobj)
 
-        self.SWITCH_TO_ALLPIX = 50
         self.load_dataset()
+        self.SWITCH_TO_ALLPIX = 50
 
     def load_dataset(self):
         # Load Dataset
@@ -54,9 +54,7 @@ class ObjectOptimizer:
         # Refinement
         gsize = 200
         threshold = 1e-8
-        max_refinements = 1000
-
-        for _ in range(max_refinements):
+        for itr in range(2000):
             real_range = cp.linspace(best_ftobj.real - gsize, best_ftobj.real + gsize, 10)
             imag_range = cp.linspace(best_ftobj.imag - gsize, best_ftobj.imag + gsize, 10)
             real_grid, imag_grid = cp.meshgrid(real_range, imag_range)
@@ -74,7 +72,7 @@ class ObjectOptimizer:
             min_error = new_min_error
             gsize /= 2
 
-        return best_ftobj
+        return best_ftobj, itr
 
     def optimize_all_pixels(self):
         if self.ITER < self.SWITCH_TO_ALLPIX:
@@ -94,15 +92,16 @@ class ObjectOptimizer:
 
         total_pixels = h_indices.size
         optimized_params = self.prev_ftobj.copy()
-
+        itrs = []
         for idx in range(total_pixels):
             h = int(h_indices[idx])
             k = int(k_indices[idx])
-            best_ftobj = self.optimize_pixel(h, k)
+            best_ftobj, itr = self.optimize_pixel(h, k)
             optimized_params[h + self.cen, k + self.cen] = best_ftobj
             self._print_progress(idx + 1, total_pixels)
+            itrs.append(itr)
 
-        return optimized_params
+        return optimized_params, cp.array(itrs)
 
     def _print_progress(self, count, total):
         progress = (count / total) * 100

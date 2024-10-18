@@ -5,17 +5,17 @@ from configparser import ConfigParser
 from utils import get_vals
 
 class ParamOptimizer:
-    def __init__(self, i, N, ftobj, data_file, output_file):
+    def __init__(self, niter, N, ftobj, data_file, output_file):
         self.N = N
         self.cen = N // 2
 
         self.DATA_FILE = data_file
         self.OUTPUT_FILE = output_file
-        self.ITER = i
-
+        self.ITER = niter
         self.ftobj = cp.asarray(ftobj)
-        self.SWITCH_TO_REFINEMENT = 50
         self.load_dataset()
+
+        self.SWITCH_TO_REFINEMENT = 50
 
     def load_dataset(self):
         # Load Dataset
@@ -23,11 +23,11 @@ class ParamOptimizer:
             self.intens_vals = cp.asarray(f['intens'])
             self.funitc = cp.asarray(f['funitc'])
 
-    def load_fitvals(self, output_file, itern):
+    def load_fitvals(self, output_file, niter):
         # Load Fitted Parameter Values from Previous Iteration
-        file = f'{output_file.split(".h5")[0]}{itern - 1:03d}.h5'
+        file = f'{output_file.split(".h5")[0]}{niter - 1:03d}.h5'
         with h5py.File(file, "r") as f:
-            fitvals = tuple(cp.asarray(f[key][:]) for key in ['fitted_dx', 'fitted_dy', 'fitted_fluence', 'error'])
+            fitvals = tuple(cp.asarray(f[key][:]) for key in ['fitted_dx', 'fitted_dy', 'fitted_fluence', 'error_params'])
         return fitvals
 
     # GRID SEARCH METHOD
@@ -66,22 +66,22 @@ class ParamOptimizer:
             dy_range = cp.linspace(0, 1, ncoarse)
             fluence_range = cp.linspace(0.1, 10, ncoarse)
 
-            optimal_params, min_error = self.grid_search(
-                qh, qk, funitc_vals, ftobj_vals, intens_vals, dx_range, dy_range, fluence_range
-            )
+            optimal_params, min_error = self.grid_search(qh, qk, 
+                                                         funitc_vals, ftobj_vals, intens_vals, 
+                                                         dx_range, dy_range, fluence_range)
             dx0, dy0, fluence0 = optimal_params
 
         # Refinement loop
         gsize = 0.05
-        threshold = 1e-4
-        for _ in range(1000):
+        threshold = 1e-5
+        for itr in range(2000):
             dx_range = cp.linspace(max(dx0 - gsize, 0), min(dx0 + gsize, 1), 10)
             dy_range = cp.linspace(max(dy0 - gsize, 0), min(dy0 + gsize, 1), 10)
             fluence_range = cp.linspace(max(fluence0 - 2 * gsize, 0.1), min(fluence0 + 2 * gsize, 10), 10)
 
-            new_params, new_error = self.grid_search(
-                qh, qk, funitc_vals, ftobj_vals, intens_vals, dx_range, dy_range, fluence_range
-            )
+            new_params, new_error = self.grid_search(qh, qk, 
+                                                     funitc_vals, ftobj_vals, intens_vals, 
+                                                     dx_range, dy_range, fluence_range)
 
             if cp.abs(min_error - new_error) < threshold:
                 break
@@ -90,11 +90,11 @@ class ParamOptimizer:
             min_error = new_error
             gsize /= 2
 
-        return (dx0, dy0, fluence0), float(min_error)
+        return (dx0, dy0, fluence0), float(min_error), itr
 
 
     def optimize_params(self):
-        #RUN OPTIMZATION for EACH FRAME
+        # RUN OPTIMZATION for EACH FRAME
         hk = [(0, 1), (1, 1), (1, 0), (1, -1)]
         num_frames = self.intens_vals.shape[0]
 
@@ -106,23 +106,27 @@ class ParamOptimizer:
         for frame_idx in range(num_frames):
             intens = self.intens_vals[frame_idx]
             if prev_fitvals:
-                prev_vals_frame = (prev_fitvals[0][frame_idx], prev_fitvals[1][frame_idx], prev_fitvals[2][frame_idx], prev_fitvals[3][frame_idx])
+                prev_vals_frame = (prev_fitvals[0][frame_idx], 
+                                   prev_fitvals[1][frame_idx], 
+                                   prev_fitvals[2][frame_idx], 
+                                   prev_fitvals[3][frame_idx])
             else:
                 prev_vals_frame = None
 
-            optimal_params, error = self.analyze_frame(intens, hk, prev_vals_frame)
+            optimal_params, error, itr = self.analyze_frame(intens, hk, prev_vals_frame)
 
             dx, dy, fluence = optimal_params
             results.append({
                 'dx': dx % 1,
                 'dy': dy % 1,
                 'fluence': fluence,
-                'error': error
+                'error': error,
+                'iter': itr
             })
 
             print(
                 f"ITER {self.ITER}: FRAME {frame_idx + 1}/{num_frames}: "
-                f"Dx={dx:.3f}, Dy={dy:.3f}, Fluence={fluence:.3f}, Error={error:.3e}",
+                f"Dx={dx:.3f}, Dy={dy:.3f}, Fluence={fluence:.3f}, Error={error:.3e}, BreakIter={itr}",
                 flush=True
             )
 
@@ -130,6 +134,7 @@ class ParamOptimizer:
         fitted_dy = cp.array([res['dy'] for res in results])
         fitted_fluence = cp.array([res['fluence'] for res in results])
         min_errors = cp.array([res['error'] for res in results])
+        itrs = cp.array([res['iter'] for res in results])
 
-        return fitted_dx, fitted_dy, fitted_fluence, min_errors
+        return fitted_dx, fitted_dy, fitted_fluence, min_errors, itrs
 
