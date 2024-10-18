@@ -4,7 +4,7 @@ import configparser
 import h5py
 
 class OrientationOptimizer:
-    def __init__(self, N, DATA_FILE):
+    def __init__(self, N, fluence, shifts, ftobj, data_file):
         self.N = N
         self.cen = N // 2
         self.qh, self.qk = cp.indices((N, N))
@@ -13,14 +13,14 @@ class OrientationOptimizer:
 
         self.hk = cp.array([(0, 1), (1, 1), (1, 0), (1, -1)])
 
-        self.DATA_FILE = DATA_FILE
+        self.DATA_FILE = data_file
+        self.fluence = fluence 
+        self.shifts = shifts
+        self.ftobj = ftobj
         self.load_dataset()
 
     def load_dataset(self):
         with h5py.File(self.DATA_FILE, 'r') as f:
-            self.fluence = cp.asarray(f['fluence'][:])
-            self.shifts = cp.asarray(f['shifts'][:])
-            self.ftobj = cp.asarray(f['ftobj'][:])
             self.funitc = cp.asarray(f['funitc'][:])
             self.intens_vals = cp.asarray(f['intens'][:])
 

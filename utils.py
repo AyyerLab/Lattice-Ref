@@ -34,12 +34,14 @@ def makedata_config(config_file):
     SHAPE = config.get('DATA_GENERATION', 'SHAPE')
     SHIFTS = ast.literal_eval(config['DATA_GENERATION']['SHIFTS'])
     FLUENCE = ast.literal_eval(config['DATA_GENERATION']['FLUENCE'])
+    ANGLES = ast.literal_eval(config['DATA_GENERATION']['ANGLES'])
+
+    APPLY_ORIENTATION = config.getboolean('DATA_GENERATION', 'APPLY_ORIENTATION')
 
     ADD_NOISE = config.getboolean('DATA_GENERATION', 'ADD_NOISE')
     NOISE_MU = config.getfloat('DATA_GENERATION', 'NOISE_MU')
     NOISE_K = config.getfloat('DATA_GENERATION', 'NOISE_K')
-
-    return N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, DATA_FILE, ADD_NOISE, NOISE_MU, NOISE_K
+    return N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, DATA_FILE, ADD_NOISE, NOISE_MU, NOISE_K, ANGLES, APPLY_ORIENTATION
 
 def run_config(config_file):
     config = configparser.ConfigParser()
@@ -55,5 +57,7 @@ def run_config(config_file):
     USE_SHRINKWRAP = config.getboolean('OPTIMIZATION', 'USE_SHRINKWRAP')
     SHRINKWRAP_RUNS = ast.literal_eval(config['OPTIMIZATION']['SHRINKWRAP_RUNS'])
 
-    return N, NUM_ITER, INIT_FTOBJ, DATA_FILE, OUTPUT_FILE, PIXELS, USE_SHRINKWRAP, SHRINKWRAP_RUNS
+    ANGLES = ast.literal_eval(config['DATA_GENERATION']['ANGLES'])
+    NUM_SAMPLES = config.getint('DATA_GENERATION', 'NUM_SAMPLES')
+    return N, NUM_ITER, INIT_FTOBJ, DATA_FILE, OUTPUT_FILE, PIXELS, USE_SHRINKWRAP, SHRINKWRAP_RUNS, ANGLES, NUM_SAMPLES
 

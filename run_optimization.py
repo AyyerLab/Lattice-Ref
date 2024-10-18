@@ -18,8 +18,11 @@ class OptimizationRunner:
          self.OUTPUT_FILE,
          self.PIXELS,
          self.USE_SHRINKWRAP,
-         self.SHRINKWRAP_RUNS) = run_config(config_file)
+         self.SHRINKWRAP_RUNS,
+         self.ANGLES,
+         self.NUM_SAMPLES) = run_config(config_file)
         self.ftobj = None
+        self.angles = None
 
     def do_fft(self, obj):
         return cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(obj)))
@@ -48,12 +51,17 @@ class OptimizationRunner:
 
     def run_optimization(self, NUM_ITER=None):
         self.ftobj = self.get_ftobj()
+        self.angles = np.random.uniform(self.ANGLES[0], self.ANGLES[1], size=self.NUM_SAMPLES) 
         
         for i in range(1, self.NUM_ITER + 1):
             # Shifts and Fluence Optimization
-            optimizer = ParamOptimizer(i, self.N, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
+            optimizer = ParamOptimizer(i, self.N, self.angles, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
             dx, dy, fluence, error_params, iter_params = optimizer.optimize_params()
             shifts = cp.vstack((dx, dy)).T
+
+            # Orintation Optimization
+            orient_optimizer = OrientationOptimizer(self.N, fluence, shifts, self.ftobj, self.DATA_FILE)
+            orients = optimizer.optimize_orientation()
 
             # Ftobj Optimization
             grid_optimizer = ObjectOptimizer(i, self.N, shifts, fluence, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
