@@ -51,12 +51,12 @@ class OptimizationRunner:
         for i in range(1, self.NUM_ITER + 1):
             # Shifts and Fluence Optimization
             optimizer = ParamOptimizer(i, self.N, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
-            dx, dy, fluence, error_params = optimizer.optimize_params()
+            dx, dy, fluence, error_params, iter_params = optimizer.optimize_params()
             shifts = cp.vstack((dx, dy)).T
 
             # Ftobj Optimization
             grid_optimizer = ObjectOptimizer(i, self.N, shifts, fluence, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
-            ftobj_curr = grid_optimizer.optimize_all_pixels()
+            ftobj_curr, iter_ftobj = grid_optimizer.optimize_all_pixels()
 
             # Apply shrinkwrap
             apply_shrinkwrap = (self.USE_SHRINKWRAP and
@@ -68,25 +68,27 @@ class OptimizationRunner:
 
             # Calculate error
             denominator = cp.where(cp.abs(self.ftobj) == 0, 1e-10, cp.abs(self.ftobj))
-            error = cp.sum(cp.abs(cp.abs(self.ftobj) - cp.abs(ftobj_curr)) / denominator).get()
+            error_ftobj = cp.sum(cp.abs(cp.abs(self.ftobj) - cp.abs(ftobj_curr)) / denominator).get()
 
-            print(f"Iteration {i}: Error = {error}")
+            print(f"Iteration {i}: Error = {error_ftobj}")
             self.ftobj = ftobj_curr
 
             # Save results
-            self.save_results(i, shifts, fluence, self.ftobj, error_params, error)
+            self.save_results(i, shifts, fluence, self.ftobj, error_params, iter_params, error_ftobj, iter_ftobj)
 
         print("Optimization completed.")
 
-    def save_results(self, itern, shifts, fluence, ftobj, error_in_params, error_in_ftobj):
+    def save_results(self, itern, shifts, fluence, ftobj, error_params, iter_params, error_ftobj, iter_ftobj):
         output_file = self.OUTPUT_FILE.replace('.h5', f'{itern:03}.h5')
         datasets = {
             'fitted_dx': cp.asnumpy(shifts[:, 0]),
             'fitted_dy': cp.asnumpy(shifts[:, 1]),
             'fitted_fluence': cp.asnumpy(fluence),
-            'ftobj_fitted': cp.asnumpy(ftobj),
-            'error': cp.asnumpy(error_in_params),
-            'error_ftobj': cp.asnumpy(error_in_ftobj)
+            'fitted_ftobj': cp.asnumpy(ftobj),
+            'error_params': cp.asnumpy(error_params),
+            'iter_params': cp.asnumpy(iter_params),
+            'error_ftobj': cp.asnumpy(error_ftobj),
+            'iter_ftobj': cp.asnumpy(iter_ftobj)
         }
         with h5py.File(output_file, 'w') as f:
             for name, data in datasets.items():
