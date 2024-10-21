@@ -51,21 +51,22 @@ class OptimizationRunner:
 
     def run_optimization(self, NUM_ITER=None):
         self.ftobj = self.get_ftobj()
-        self.angles = np.random.uniform(self.ANGLES[0], self.ANGLES[1], size=self.NUM_SAMPLES) 
+        cp.random.seed(42)
+        self.angles = cp.random.uniform(self.ANGLES[0], self.ANGLES[1], size=self.NUM_SAMPLES) 
         
         for i in range(1, self.NUM_ITER + 1):
             # Shifts and Fluence Optimization
-            optimizer = ParamOptimizer(i, self.N, self.angles, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
-            dx, dy, fluence, error_params, iter_params = optimizer.optimize_params()
+            optimizer1 = ParamOptimizer(i, self.N, self.angles, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
+            dx, dy, fluence, error_params, iter_params = optimizer1.optimize_params()
             shifts = cp.vstack((dx, dy)).T
 
             # Orintation Optimization
-            orient_optimizer = OrientationOptimizer(self.N, fluence, shifts, self.ftobj, self.DATA_FILE)
-            orients = optimizer.optimize_orientation()
+            optimizer2 = OrientOptimizer(self.N, fluence, shifts, self.ftobj, self.DATA_FILE)
+            orients, iter_orient = optimizer2.optimize_orientation()
 
             # Ftobj Optimization
-            grid_optimizer = ObjectOptimizer(i, self.N, shifts, fluence, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
-            ftobj_curr, iter_ftobj = grid_optimizer.optimize_all_pixels()
+            optimizer3 = ObjectOptimizer(i, self.N, shifts, fluence, orients, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
+            ftobj_curr, iter_ftobj = optimizer3.optimize_all_pixels()
 
             # Apply shrinkwrap
             apply_shrinkwrap = (self.USE_SHRINKWRAP and
@@ -83,19 +84,21 @@ class OptimizationRunner:
             self.ftobj = ftobj_curr
 
             # Save results
-            self.save_results(i, shifts, fluence, self.ftobj, error_params, iter_params, error_ftobj, iter_ftobj)
+            self.save_results(i, shifts, fluence, orients, self.ftobj, error_params, iter_params, iter_orient, error_ftobj, iter_ftobj)
 
         print("Optimization completed.")
 
-    def save_results(self, itern, shifts, fluence, ftobj, error_params, iter_params, error_ftobj, iter_ftobj):
+    def save_results(self, itern, shifts, fluence, orientation, ftobj, error_params, iter_params, iter_orient,  error_ftobj, iter_ftobj):
         output_file = self.OUTPUT_FILE.replace('.h5', f'{itern:03}.h5')
         datasets = {
             'fitted_dx': cp.asnumpy(shifts[:, 0]),
             'fitted_dy': cp.asnumpy(shifts[:, 1]),
             'fitted_fluence': cp.asnumpy(fluence),
+            'fitted_orientation': cp.asnumpy(orientation),
             'fitted_ftobj': cp.asnumpy(ftobj),
             'error_params': cp.asnumpy(error_params),
             'iter_params': cp.asnumpy(iter_params),
+            'iter_orient': cp.asnumpy(iter_orient),
             'error_ftobj': cp.asnumpy(error_ftobj),
             'iter_ftobj': cp.asnumpy(iter_ftobj)
         }

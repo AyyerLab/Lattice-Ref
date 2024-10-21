@@ -17,9 +17,9 @@ class ParamOptimizer:
         self.ftobj = cp.asarray(ftobj)
         self.load_dataset()
 
-        self.angles = angles
+        self.angles = cp.asarray(angles)
 
-        self.SWITCH_TO_REFINEMENT = 50
+        self.SWITCH_TO_REFINEMENT = 2
 
     def load_dataset(self):
         # Load Dataset
@@ -43,8 +43,8 @@ class ParamOptimizer:
         qh_rot = cp.cos(angle_rad) * qh - cp.sin(angle_rad) * qk
         qk_rot = cp.sin(angle_rad) * qh + cp.cos(angle_rad) * qk
         coords = cp.array([qh_rot + self.cen, qk_rot + self.cen])
-        rotated_ft = map_coordinates(cp.abs(ftobj).get(), coords.get(), order=3, mode='wrap')
-        return cp.asarray(rotated_ft)
+        rotated_ft = map_coordinates(cp.abs(ftobj), coords, order=3, mode='wrap')
+        return rotated_ft
 
     # GRID SEARCH METHOD
     def grid_search(self, qh, qk, funitc_vals, ftobj_vals, intens_vals, dx_range, dy_range, fluence_range):

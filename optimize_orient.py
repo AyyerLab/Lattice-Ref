@@ -3,7 +3,7 @@ from cupyx.scipy.ndimage import map_coordinates
 import configparser
 import h5py
 
-class OrientationOptimizer:
+class OrientOptimizer:
     def __init__(self, N, fluence, shifts, ftobj, data_file):
         self.N = N
         self.cen = N // 2
@@ -14,9 +14,9 @@ class OrientationOptimizer:
         self.hk = cp.array([(0, 1), (1, 1), (1, 0), (1, -1)])
 
         self.DATA_FILE = data_file
-        self.fluence = fluence 
-        self.shifts = shifts
-        self.ftobj = ftobj
+        self.fluence = cp.asarray(fluence) 
+        self.shifts = cp.asarray(shifts)
+        self.ftobj = cp.asarray(ftobj)
         self.load_dataset()
 
     def load_dataset(self):
@@ -40,8 +40,10 @@ class OrientationOptimizer:
         qk = k + self.cen
         return array[qh, qk]
 
+
     def optimize_orientation(self):
         optimal_thetas = cp.zeros(self.num_samples)
+        steps = cp.zeros(self.num_samples)
 
         for i in range(self.num_samples):
             dx = self.shifts[:, 0][i]
@@ -61,7 +63,6 @@ class OrientationOptimizer:
 
                 rotated_vals = cp.array([self._getvals(rotated_ftobj, h, k) for h, k in self.hk])
                 model_int = cp.abs(funitc_vals + fluence * rotated_vals * pramp)**2
-
                 error = cp.sum((model_int - intens_vals_sample) ** 2)
                 return error
 
@@ -70,8 +71,11 @@ class OrientationOptimizer:
             theta_coarse_range = cp.linspace(0, 180, ncoarse)
             min_error = cp.finfo('f8').max
             optimal_theta = 0
+            coarse_steps = 0
+
             for theta in theta_coarse_range:
                 objective_value = objective_theta(theta)
+                coarse_steps += 1
                 if objective_value < min_error:
                     min_error = objective_value
                     optimal_theta = theta
@@ -80,19 +84,19 @@ class OrientationOptimizer:
             theta_fine_range = cp.arange(max(optimal_theta - 5, 0), min(optimal_theta + 5, 180), self.fine_step_size)
             min_error_fine = cp.finfo('f8').max
             optimal_theta_fine = optimal_theta
+            fine_steps = 0
+
             for theta in theta_fine_range:
                 objective_value = objective_theta(theta)
+                fine_steps += 1 
                 if objective_value < min_error_fine:
                     min_error_fine = objective_value
                     optimal_theta_fine = theta
 
             optimal_thetas[i] = optimal_theta_fine
-            print(f"Sample {i}: Optimal theta: {optimal_theta_fine}")
+            total_steps = coarse_steps + fine_steps
+            steps[i] = total_steps
+            print(f"Sample {i}: Optimal theta: {optimal_theta_fine}, Refinement steps: {total_steps}", flush=True)
 
-        return optimal_thetas
-
-
-
-#optimizer = OrientationOptimizer(N, DATA_FILE)
-#optimal_thetas = optimizer.optimize_orientation()
+        return optimal_thetas, steps
 

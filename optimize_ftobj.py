@@ -5,7 +5,7 @@ from cupyx.scipy.ndimage import map_coordinates
 from utils import get_vals
 
 class ObjectOptimizer:
-    def __init__(self, itern, N, shifts, fluence, ftobj, data_file, output_file):
+    def __init__(self, itern, N, shifts, fluence, angles, ftobj, data_file, output_file):
         self.N = N
         self.cen = N // 2
 
@@ -15,10 +15,11 @@ class ObjectOptimizer:
         self.ITER = itern
         self.shifts = cp.asarray(shifts)
         self.fluence_vals = cp.asarray(fluence)
+        self.angles = cp.asarray(angles)
         self.prev_ftobj = cp.asarray(ftobj)
 
         self.load_dataset()
-        self.SWITCH_TO_ALLPIX = 50
+        self.SWITCH_TO_ALLPIX = 2
 
     def load_dataset(self):
         # Load Dataset
@@ -36,17 +37,15 @@ class ObjectOptimizer:
         qh_rot = cp.cos(angle_rad) * qh - cp.sin(angle_rad) * qk
         qk_rot = cp.sin(angle_rad) * qh + cp.cos(angle_rad) * qk
         coords = cp.array([qh_rot + self.cen, qk_rot + self.cen])
-        rotated_ft = map_coordinates(cp.abs(ftobj).get(), coords.get(), order=3, mode='wrap')
-        return cp.asarray(rotated_ft)
+        rotated_ft = map_coordinates(cp.abs(ftobj), coords, order=3, mode='wrap')
+        return rotated_ft
 
     # GRID SEARCH for each pixel
-    def optimize_pixel(self, h, k, angle):
+    def optimize_pixel(self, h, k):
         funitc_val = get_vals(self.funitc, self.cen, h, k)
         intens_vals = self.intens_vals[:, h + self.cen, k + self.cen]
         phases = 2 * cp.pi * (h * self.shifts[:, 0] + k * self.shifts[:, 1])
         pramp = cp.exp(1j * phases)
-
-        rotated_ftobj = self.rotate_ft(self.prev_ftobj, angle)  # Apply rotation
 
         def objective(ftobj_vals):
             F = funitc_val + self.fluence_vals[:, cp.newaxis] * ftobj_vals * pramp[:, cp.newaxis]
@@ -88,7 +87,7 @@ class ObjectOptimizer:
 
         return best_ftobj, itr
 
-    def optimize_all_pixels(self, angle):
+    def optimize_all_pixels(self):
         if self.ITER < self.SWITCH_TO_ALLPIX:
             radius = 30
             h_vals = cp.arange(-self.cen, self.cen + 1)
@@ -110,7 +109,7 @@ class ObjectOptimizer:
         for idx in range(total_pixels):
             h = int(h_indices[idx])
             k = int(k_indices[idx])
-            best_ftobj, itr = self.optimize_pixel(h, k, angle)
+            best_ftobj, itr = self.optimize_pixel(h, k)
             optimized_params[h + self.cen, k + self.cen] = best_ftobj
             self._print_progress(idx + 1, total_pixels)
             itrs.append(itr)
