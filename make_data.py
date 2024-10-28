@@ -78,21 +78,19 @@ class DataGenerator:
             shifty = self.dy_vals[i]
             fluence = self.fluence_vals[i]
             phase = self.phase_ramp(shiftx, shifty)
-            obj_ft = fluence * ftobj * phase
-            intens = np.abs(funitc + obj_ft)**2
-
+            intens = np.abs(funitc + fluence * ftobj * phase)**2
+            
             if self.ADD_NOISE:
-                noise_sigma = self.NOISE_K * np.sqrt(intens.max())
+                noise_sigma = self.NOISE_K * np.sqrt(intens)
                 np.random.seed(SEED)
                 noise = np.random.normal(loc=self.NOISE_MU, scale=noise_sigma, size=intens.shape)
-                intens += noise
+                intens_n = intens + noise
+            intens_vals[i] = intens_n
 
-            intens_vals[i] = intens
-
-        return intens_vals, ftobj, funitc, tobj, unitc
+        return intens_vals, noise, ftobj, funitc, tobj, unitc
 
     def save_data(self, filename):
-        intens_vals, ftobj, funitc, tobj, unitc = self.generate_dataset()
+        intens_vals, noise, ftobj, funitc, tobj, unitc = self.generate_dataset()
         with h5py.File(filename, 'w') as f:
             f.create_dataset('intens', data=intens_vals)
             f.create_dataset('ftobj', data=ftobj)
@@ -101,11 +99,14 @@ class DataGenerator:
             f.create_dataset('unitc', data=unitc)
             f.create_dataset('shifts', data=np.vstack((self.dx_vals, self.dy_vals)).T)
             f.create_dataset('fluence', data=self.fluence_vals)
-            f.create_dataset('noise_k', data=self.NOISE_K)
+            f.create_dataset('NOISE_K', data=self.NOISE_K)
+            f.create_dataset('noise', data=noise)
 
 if __name__ == "__main__":
     config_file = 'config.ini'
-    N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, DATA_FILE, ADD_NOISE, NOISE_MU, NOISE_K = makedata_config(config_file)
-    generator = DataGenerator(N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, ADD_NOISE, NOISE_MU, NOISE_K)
+    (N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, 
+     SEED, DATA_FILE, ADD_NOISE, NOISE_MU, NOISE_K) = makedata_config(config_file)
+    generator = DataGenerator(N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, 
+                              SEED, ADD_NOISE, NOISE_MU, NOISE_K)
     generator.save_data(DATA_FILE)
 
