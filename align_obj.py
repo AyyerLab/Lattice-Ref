@@ -1,16 +1,15 @@
-import h5py
 import numpy as np
+import h5py
 from scipy import ndimage
 from scipy.optimize import curve_fit
 
-class FRC:
-    def __init__(self, fitted_ftobj_path, ftobj_path):
+class Align:
+    def __init__(self, ftobj_path, fitted_ftobj_path):
         self.N = 127
-
-        with h5py.File(fitted_ftobj_path, 'r') as f:
-            self.fitted_ftobj = f['fitted_ftobj'][:]
         with h5py.File(ftobj_path, 'r') as f:
             self.ftobj = f['ftobj'][:]
+        with h5py.File(fitted_ftobj_path, 'r') as f:
+            self.fitted_ftobj = f['fitted_ftobj'][:]
     
     def do_fft(self, obj):
         return np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(obj)))
@@ -19,6 +18,7 @@ class FRC:
         return np.fft.fftshift(np.fft.ifftn(np.fft.ifftshift(ftobj)))
 
     def _get_supp(self, ftobj, sig, pixels):
+        # Get estimate of support
         invsuppmask = np.ones((self.N,) * 2, dtype=np.bool_)
         amodel = np.real(self.do_ifft(ftobj.reshape((self.N,) * 2)))
         samodel = ndimage.gaussian_filter(amodel, sig)
@@ -35,6 +35,7 @@ class FRC:
         return obj_cen
 
     def fit_pramp(self, pramp):
+        # Fit lunear function to phase ramp
         def linear_fun(coords, A, B, C):
             x, y = coords
             return A * x + B * y + C
@@ -48,7 +49,7 @@ class FRC:
         coords = np.vstack((x_flat, y_flat))
         params, _ = curve_fit(linear_fun, coords, z_flat)
         return params
-    
+
     def fix_phase(self, fobj, pramp, region=None):
         # Use a specific region for fitting if provided
         if region is not None:
@@ -63,6 +64,7 @@ class FRC:
         y = np.arange(h) - h // 2
         X, Y = np.meshgrid(x, y)
         fit_pramp_vals = (A * X + B * Y + C)
+        # Apply phase ramp
         fobj_align = fobj * np.exp(1j * fit_pramp_vals)
         return fobj_align
 
@@ -81,39 +83,14 @@ class FRC:
         pramp = np.angle(self.do_fft(tobj_cen) / self.do_fft(fitted_tobj_cen))
         # Fix the phase
         fitted_ftobj_align = self.fix_phase(self.do_fft(fitted_tobj_cen), pramp, region)
-        return fitted_ftobj_align, self.do_fft(tobj_cen)    
+        return fitted_ftobj_align, self.do_fft(tobj_cen)
 
-    def calculate_frc(self, obj1, obj2, binsize=1., do_abs=False):
-        fobj1 = self.do_fft(obj1)
-        fobj2 = self.do_fft(obj2)
-        x, y = np.meshgrid(np.arange(self.N) - self.N // 2, np.arange(self.N) - self.N // 2, indexing='ij')
-        binrad = (np.sqrt(x**2 + y**2) / binsize).astype(int)
-        rsize = binrad.max() + 1
-        numr = np.zeros(rsize, dtype=np.complex128)
-        denr1 = np.zeros(rsize, dtype=np.float64)
-        denr2 = np.zeros(rsize, dtype=np.float64)
-        np.add.at(numr, binrad, fobj1 * np.conj(fobj2))
-        np.add.at(denr1, binrad, np.abs(fobj1)**2)
-        np.add.at(denr2, binrad, np.abs(fobj2)**2)
+####  Execution
 
-        denr = np.sqrt(denr1 * denr2)
-        frc_vals = np.zeros(rsize, dtype=np.float64)
-        valid = denr > 0
-        if do_abs:
-            frc_vals[valid] = np.abs(numr[valid]) / denr[valid]
-        else:
-            frc_vals[valid] = np.real(numr[valid]) / denr[valid]
-        rvals = np.arange(rsize) * binsize
-        return rvals, frc_vals
-
-    def process(self):
-        aligned_fitted_ftobj, aligned_ftobj = self.align()
-        rvals, frc_vals = self.calculate_frc(self.do_ifft(aligned_fitted_ftobj), self.do_ifft(aligned_ftobj))
-        return rvals, frc_vals
+#ftobj_path = '/scratch/mallabhi/lattice_ref/data/K/dataset_K10.h5'
+#fitted_ftobj_path = '/scratch/mallabhi/lattice_ref/output/output_K10_NS_150.h5'
+#aligner = ao.Align(ftobj_path, fitted_ftobj_path)
+#aligned_fitted_ftobj, aligned_ftobj = aligner.align()
 
 
-#### Execution
-#frc = FRC('/u/mallabhi/lattice_ref/data/output/output150.h5',
-#                            '/u/mallabhi/lattice_ref/data/dataset.h5')
-#rvals, frc_vals = frc.process()
 
