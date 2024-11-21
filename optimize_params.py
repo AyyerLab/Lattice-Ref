@@ -15,7 +15,7 @@ class ParamOptimizer:
         self.ftobj = cp.asarray(ftobj)
         self.load_dataset()
 
-        self.SWITCH_TO_REFINEMENT = 50
+        self.REFINE_PARAMS_AT = 100
 
     def load_dataset(self):
         # Load Dataset
@@ -27,7 +27,10 @@ class ParamOptimizer:
         # Load Fitted Parameter Values from Previous Iteration
         file = f'{output_file.split(".h5")[0]}{niter - 1:03d}.h5'
         with h5py.File(file, "r") as f:
-            fitvals = tuple(cp.asarray(f[key][:]) for key in ['fitted_dx', 'fitted_dy', 'fitted_fluence', 'error_params'])
+            fitvals = tuple(cp.asarray(f[key][:]) for key in ['fitted_dx', 
+                                                              'fitted_dy', 
+                                                              'fitted_fluence', 
+                                                              'error_params'])
         return fitvals
 
     # GRID SEARCH METHOD
@@ -99,7 +102,7 @@ class ParamOptimizer:
         num_frames = self.intens_vals.shape[0]
 
         prev_fitvals = None
-        if self.ITER == self.SWITCH_TO_REFINEMENT:
+        if self.ITER == self.REFINE_PARAMS_AT:
             prev_fitvals = self.load_fitvals(self.OUTPUT_FILE, self.ITER)
 
         results = []

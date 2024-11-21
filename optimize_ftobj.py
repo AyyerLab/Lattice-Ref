@@ -1,24 +1,22 @@
 import cupy as cp
 import h5py
 import sys
-
 from utils import get_vals
 
 class ObjectOptimizer:
     def __init__(self, itern, N, shifts, fluence, ftobj, data_file, output_file):
         self.N = N
         self.cen = N // 2
-
         self.DATA_FILE = data_file
         self.OUTPUT_FILE = output_file
-
         self.ITER = itern
+
         self.shifts = cp.asarray(shifts)
         self.fluence_vals = cp.asarray(fluence)
         self.prev_ftobj = cp.asarray(ftobj)
-
         self.load_dataset()
-        self.SWITCH_TO_ALLPIX = 50
+
+        self.SWITCH_TO_ALLPIX_AT = 100
 
     def load_dataset(self):
         # Load Dataset
@@ -41,18 +39,18 @@ class ObjectOptimizer:
             return cp.sum(residuals ** 2, axis=0)
 
         # Coarse grid search
-        real_vals = cp.linspace(-2000, 2000, 200)
-        imag_vals = cp.linspace(-2000, 2000, 200)
+        real_vals = cp.linspace(-3*2000, 3*2000, 200)
+        imag_vals = cp.linspace(-3*2000, 3*2000, 200)
         real_grid, imag_grid = cp.meshgrid(real_vals, imag_vals)
         ftobj_vals = (real_grid + 1j * imag_grid).ravel()
-
         errors = objective(ftobj_vals)
         min_idx = cp.argmin(errors)
         best_ftobj = ftobj_vals[min_idx]
-        min_error = errors[min_idx]
 
+        min_error = objective(best_ftobj)
+        
         # Refinement
-        gsize = 200
+        gsize = 3*200
         threshold = 1e-8
         for itr in range(2000):
             real_range = cp.linspace(best_ftobj.real - gsize, best_ftobj.real + gsize, 10)
@@ -75,8 +73,8 @@ class ObjectOptimizer:
         return best_ftobj, itr
 
     def optimize_all_pixels(self):
-        if self.ITER < self.SWITCH_TO_ALLPIX:
-            radius = 30
+        if self.ITER < self.SWITCH_TO_ALLPIX_AT:
+            radius = 5
             h_vals = cp.arange(-self.cen, self.cen + 1)
             k_vals = cp.arange(-self.cen, self.cen + 1)
             h_grid, k_grid = cp.meshgrid(h_vals, k_vals)
@@ -106,3 +104,4 @@ class ObjectOptimizer:
     def _print_progress(self, count, total):
         progress = (count / total) * 100
         print(f"\rOptimized {count}/{total} pixels ({progress:.2f}%)", end='', flush=True)
+

@@ -4,7 +4,6 @@ from cupyx.scipy import ndimage
 import configparser
 
 from utils import run_config, init_tobj
-
 from optimize_params import ParamOptimizer
 from optimize_ftobj import ObjectOptimizer
 
@@ -16,8 +15,7 @@ class OptimizationRunner:
          self.DATA_FILE,
          self.OUTPUT_FILE,
          self.PIXELS,
-         self.USE_SHRINKWRAP,
-         self.SHRINKWRAP_RUNS) = run_config(config_file)
+         self.USE_SHRINKWRAP) = run_config(config_file)
         self.ftobj = None
 
     def do_fft(self, obj):
@@ -28,17 +26,17 @@ class OptimizationRunner:
 
     def get_ftobj(self):
         fobjs = {
-                'RD': lambda: cp.random.rand(self.N, self.N) + 1j * cp.random.rand(self.N, self.N),
-                'TS': lambda: cp.asarray(h5py.File(self.DATA_FILE, 'r')['ftobj'][:]),
-                'CR': lambda: self.do_fft(init_tobj(self.N, self.PIXELS))
-                }
+            'RD': lambda: cp.random.rand(self.N, self.N) + 1j * cp.random.rand(self.N, self.N),
+            'TS': lambda: cp.asarray(h5py.File(self.DATA_FILE, 'r')['ftobj'][:]),
+            'CR': lambda: self.do_fft(init_tobj(self.N, self.PIXELS))
+        }
         if self.INIT_FTOBJ not in fobjs:
             raise ValueError(f"Unknown INIT_FTOBJ: {self.INIT_FTOBJ}")
         return fobjs[self.INIT_FTOBJ]()
 
     def shrinkwrap(self, ftobj_pred, sig):
-        invsuppmask = cp.ones((self.N,)*2, dtype=cp.bool_)
-        amodel = cp.real(self.do_ifft(ftobj_pred.reshape((self.N,)*2)))
+        invsuppmask = cp.ones((self.N,) * 2, dtype=cp.bool_)
+        amodel = cp.real(self.do_ifft(ftobj_pred.reshape((self.N,) * 2)))
         samodel = ndimage.gaussian_filter(amodel, sig)
         thresh = cp.quantile(samodel, (samodel.size - self.PIXELS) / samodel.size)
         invsuppmask = samodel < thresh
@@ -46,8 +44,8 @@ class OptimizationRunner:
         return self.do_fft(amodel)
 
     def run_optimization(self, NUM_ITER=None):
+        # Load initial ftobj
         self.ftobj = self.get_ftobj()
-        
         for i in range(1, self.NUM_ITER + 1):
             # Shifts and Fluence Optimization
             optimizer = ParamOptimizer(i, self.N, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
@@ -59,12 +57,9 @@ class OptimizationRunner:
             ftobj_curr, iter_ftobj = grid_optimizer.optimize_all_pixels()
 
             # Apply shrinkwrap
-            apply_shrinkwrap = (self.USE_SHRINKWRAP and
-                                i > self.SHRINKWRAP_RUNS[0] and
-                                i % self.SHRINKWRAP_RUNS[1] == 0)
-
+            apply_shrinkwrap = (self.USE_SHRINKWRAP and i == self.NUM_ITER)
             if apply_shrinkwrap:
-                ftobj_curr = self.shrinkwrap(ftobj_curr, 0.5)
+                ftobj_curr = self.shrinkwrap(ftobj_curr, 1.25)
 
             # Calculate error
             denominator = cp.where(cp.abs(self.ftobj) == 0, 1e-10, cp.abs(self.ftobj))
@@ -96,6 +91,8 @@ class OptimizationRunner:
         print(f"\nResults saved to {output_file}")
 
 if __name__ == "__main__":
+    device_id = 1
+    cp.cuda.Device(device_id).use()
     runner = OptimizationRunner('config.ini')
     runner.run_optimization()
 
