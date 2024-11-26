@@ -91,8 +91,8 @@ class OptimizationRunner:
         print(f"\nResults saved to {output_file}")
 
 if __name__ == "__main__":
-    device_id = 1
-    cp.cuda.Device(device_id).use()
+    #device_id = 1
+    #cp.cuda.Device(device_id).use()
     runner = OptimizationRunner('config.ini')
     runner.run_optimization()
 
