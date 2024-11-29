@@ -4,7 +4,6 @@ from cupyx.scipy import ndimage
 import configparser
 
 from utils import run_config, init_tobj
-
 from optimize_params import ParamOptimizer
 from optimize_orient import OrientOptimizer
 from optimize_ftobj import ObjectOptimizer
@@ -12,17 +11,17 @@ from optimize_ftobj import ObjectOptimizer
 class OptimizationRunner:
     def __init__(self, config_file):
         (self.N,
+         self.NUM_SAMPLES,
          self.NUM_ITER,
+         self.SEED,
          self.INIT_FTOBJ,
          self.DATA_FILE,
          self.OUTPUT_FILE,
          self.PIXELS,
          self.USE_SHRINKWRAP,
-         self.SHRINKWRAP_RUNS,
-         self.ANGLES,
-         self.NUM_SAMPLES) = run_config(config_file)
+         self.APPLY_ORIENTATION,
+         self.ANGLES) = run_config(config_file)
         self.ftobj = None
-        self.angles = None
 
     def do_fft(self, obj):
         return cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(obj)))
@@ -32,17 +31,17 @@ class OptimizationRunner:
 
     def get_ftobj(self):
         fobjs = {
-                'RD': lambda: cp.random.rand(self.N, self.N) + 1j * cp.random.rand(self.N, self.N),
-                'TS': lambda: cp.asarray(h5py.File(self.DATA_FILE, 'r')['ftobj'][:]),
-                'CR': lambda: self.do_fft(init_tobj(self.N, self.PIXELS))
-                }
+            'RD': lambda: cp.random.rand(self.N, self.N) + 1j * cp.random.rand(self.N, self.N),
+            'TS': lambda: cp.asarray(h5py.File(self.DATA_FILE, 'r')['ftobj'][:]),
+            'CR': lambda: self.do_fft(init_tobj(self.N, self.PIXELS))
+        }
         if self.INIT_FTOBJ not in fobjs:
             raise ValueError(f"Unknown INIT_FTOBJ: {self.INIT_FTOBJ}")
         return fobjs[self.INIT_FTOBJ]()
 
     def shrinkwrap(self, ftobj_pred, sig):
-        invsuppmask = cp.ones((self.N,)*2, dtype=cp.bool_)
-        amodel = cp.real(self.do_ifft(ftobj_pred.reshape((self.N,)*2)))
+        invsuppmask = cp.ones((self.N,) * 2, dtype=cp.bool_)
+        amodel = cp.real(self.do_ifft(ftobj_pred.reshape((self.N,) * 2)))
         samodel = ndimage.gaussian_filter(amodel, sig)
         thresh = cp.quantile(samodel, (samodel.size - self.PIXELS) / samodel.size)
         invsuppmask = samodel < thresh
@@ -50,31 +49,35 @@ class OptimizationRunner:
         return self.do_fft(amodel)
 
     def run_optimization(self, NUM_ITER=None):
+        # Load initial ftobj
         self.ftobj = self.get_ftobj()
-        cp.random.seed(42)
-        self.angles = cp.random.uniform(self.ANGLES[0], self.ANGLES[1], size=self.NUM_SAMPLES) 
-        
+        cp.random.seed(self.SEED)
+        self.ANGLES = cp.random.uniform(self.ANGLES[0], self.ANGLES[1], size=self.NUM_SAMPLES)
+
         for i in range(1, self.NUM_ITER + 1):
             # Shifts and Fluence Optimization
-            optimizer1 = ParamOptimizer(i, self.N, self.angles, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
+            optimizer1 = ParamOptimizer(i, self.N, self.ftobj,
+                                        self.DATA_FILE, self.OUTPUT_FILE,
+                                        self.APPLY_ORIENTATION, self.ANGLES)
             dx, dy, fluence, error_params, iter_params = optimizer1.optimize_params()
             shifts = cp.vstack((dx, dy)).T
 
-            # Orintation Optimization
-            optimizer2 = OrientOptimizer(self.N, fluence, shifts, self.ftobj, self.DATA_FILE)
-            orients, iter_orient = optimizer2.optimize_orientation()
+            if self.APPLY_ORIENTATION:
+                # Orientation Optimization
+                optimizer2 = OrientOptimizer(self.N, fluence, shifts, self.ftobj, self.DATA_FILE)
+                orients, iter_orient = optimizer2.optimize_orientation()
+            else:
+                orients = cp.zeros(self.NUM_SAMPLES)
+                iter_orient = 0
 
             # Ftobj Optimization
             optimizer3 = ObjectOptimizer(i, self.N, shifts, fluence, orients, self.ftobj, self.DATA_FILE, self.OUTPUT_FILE)
             ftobj_curr, iter_ftobj = optimizer3.optimize_all_pixels()
 
             # Apply shrinkwrap
-            apply_shrinkwrap = (self.USE_SHRINKWRAP and
-                                i > self.SHRINKWRAP_RUNS[0] and
-                                i % self.SHRINKWRAP_RUNS[1] == 0)
-
+            apply_shrinkwrap = (self.USE_SHRINKWRAP and i == self.NUM_ITER)
             if apply_shrinkwrap:
-                ftobj_curr = self.shrinkwrap(ftobj_curr, 0.5)
+                ftobj_curr = self.shrinkwrap(ftobj_curr, 1.25)
 
             # Calculate error
             denominator = cp.where(cp.abs(self.ftobj) == 0, 1e-10, cp.abs(self.ftobj))
@@ -82,13 +85,14 @@ class OptimizationRunner:
 
             print(f"Iteration {i}: Error = {error_ftobj}")
             self.ftobj = ftobj_curr
+            self.ANGLES = orients
 
             # Save results
             self.save_results(i, shifts, fluence, orients, self.ftobj, error_params, iter_params, iter_orient, error_ftobj, iter_ftobj)
 
         print("Optimization completed.")
 
-    def save_results(self, itern, shifts, fluence, orientation, ftobj, error_params, iter_params, iter_orient,  error_ftobj, iter_ftobj):
+    def save_results(self, itern, shifts, fluence, orientation, ftobj, error_params, iter_params, iter_orient, error_ftobj, iter_ftobj):
         output_file = self.OUTPUT_FILE.replace('.h5', f'{itern:03}.h5')
         datasets = {
             'fitted_dx': cp.asnumpy(shifts[:, 0]),
@@ -108,6 +112,8 @@ class OptimizationRunner:
         print(f"\nResults saved to {output_file}")
 
 if __name__ == "__main__":
+    #device_id = 1
+    #cp.cuda.Device(device_id).use()
     runner = OptimizationRunner('config.ini')
     runner.run_optimization()
 
