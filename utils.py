@@ -28,12 +28,11 @@ def makedata_config(config_file):
 
     N = config.getint('DATA_GENERATION', 'N')
     NUM_SAMPLES = config.getint('DATA_GENERATION', 'NUM_SAMPLES')
-    SCALE = config.getint('DATA_GENERATION', 'SCALE')
+    SCALE = config.getfloat('DATA_GENERATION', 'SCALE')
     SEED = config.getint('DATA_GENERATION', 'SEED')
     DATA_FILE = config.get('DATA_GENERATION', 'DATA_FILE')
     SHAPE = config.get('DATA_GENERATION', 'SHAPE')
     SHIFTS = ast.literal_eval(config['DATA_GENERATION']['SHIFTS'])
-    FLUENCE = ast.literal_eval(config['DATA_GENERATION']['FLUENCE'])
     ANGLES = ast.literal_eval(config['DATA_GENERATION']['ANGLES'])
 
     APPLY_ORIENTATION = config.getboolean('DATA_GENERATION', 'APPLY_ORIENTATION')
@@ -41,7 +40,8 @@ def makedata_config(config_file):
     ADD_NOISE = config.getboolean('DATA_GENERATION', 'ADD_NOISE')
     NOISE_MU = config.getfloat('DATA_GENERATION', 'NOISE_MU')
     NOISE_K = config.getfloat('DATA_GENERATION', 'NOISE_K')
-    return N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, FLUENCE, SEED, DATA_FILE, ADD_NOISE, NOISE_MU, NOISE_K, ANGLES, APPLY_ORIENTATION
+
+    return N, NUM_SAMPLES, SHAPE, SCALE, SHIFTS, SEED, DATA_FILE, ADD_NOISE, NOISE_MU, NOISE_K, APPLY_ORIENTATION, ANGLES
 
 def run_config(config_file):
     config = configparser.ConfigParser()
@@ -49,15 +49,16 @@ def run_config(config_file):
 
     N = config.getint('DATA_GENERATION', 'N')
     NUM_ITER = config.getint('OPTIMIZATION', 'NUM_ITERATION')
+    NUM_SAMPLES = config.getint('DATA_GENERATION', 'NUM_SAMPLES')
+    SEED = config.getint('DATA_GENERATION', 'SEED')
     INIT_FTOBJ = config.get('OPTIMIZATION', 'INIT_FTOBJ')
 
     DATA_FILE = config.get('DATA_GENERATION', 'DATA_FILE')
     OUTPUT_FILE = config.get('OPTIMIZATION', 'OUTPUT_FILE')
     PIXELS = config.getint('OPTIMIZATION', 'PIXELS')
     USE_SHRINKWRAP = config.getboolean('OPTIMIZATION', 'USE_SHRINKWRAP')
-    SHRINKWRAP_RUNS = ast.literal_eval(config['OPTIMIZATION']['SHRINKWRAP_RUNS'])
-
+    APPLY_ORIENTATION = config.getboolean('DATA_GENERATION', 'APPLY_ORIENTATION')
     ANGLES = ast.literal_eval(config['DATA_GENERATION']['ANGLES'])
-    NUM_SAMPLES = config.getint('DATA_GENERATION', 'NUM_SAMPLES')
-    return N, NUM_ITER, INIT_FTOBJ, DATA_FILE, OUTPUT_FILE, PIXELS, USE_SHRINKWRAP, SHRINKWRAP_RUNS, ANGLES, NUM_SAMPLES
+
+    return N, NUM_SAMPLES, NUM_ITER, SEED, INIT_FTOBJ, DATA_FILE, OUTPUT_FILE, PIXELS, USE_SHRINKWRAP, APPLY_ORIENTATION, ANGLES
 
