@@ -1,9 +1,11 @@
+import numpy as np
+import mrcfile
 import random
 from scipy.ndimage import map_coordinates
 from scipy import ndimage
 from utils import do_fft, do_ifft
 
-num_frames = 100
+num_frames = 500
 N = 101
 cen = N // 2
 qh, qk = np.indices((N, N))
@@ -36,7 +38,6 @@ def unit_cell(N):
     unitc = ndimage.gaussian_filter(random_.astype(float), sigma=(0.7, 0.7), mode='wrap') * (rad<30)
     return unitc, 100 * do_fft(unitc)
 
-
 def rotate_ft(N, ftobj, angle):
     cen = N // 2
     qh, qk = np.indices((N, N))
@@ -45,7 +46,7 @@ def rotate_ft(N, ftobj, angle):
     qh_rot = np.cos(angle) * qh - np.sin(angle) * qk
     qk_rot = np.sin(angle) * qh + np.cos(angle) * qk
     coords = np.array([qh_rot + cen, qk_rot + cen])
-    rotated_ft = map_coordinates(ftobj, coords, order=0, mode='nearest')
+    rotated_ft = map_coordinates(ftobj, coords, order=1, mode='nearest')
     return rotated_ft
 
 def phase_ramp(shiftx, shifty):
@@ -73,88 +74,65 @@ for i in range(num_frames):
 Iobs = intensities
 
 # Algorithm
-#Qh, Qk = (1,1)
-
-#ftobj_true_val = _getvals(ftobj, Qh, Qk)
-#print("True Value : ", ftobj_true_val)
-#funitc_vals = np.zeros(num_frames, dtype=complex)
-#intens_vals = np.zeros(num_frames, dtype=float)
-#phases = np.zeros(num_frames, dtype=float)
-
-#for i in range(num_frames):
-#    angle = angle_vals[i]
-#    qh_rot = np.cos(angle) * Qh - np.sin(angle) * Qk
-#    qk_rot = np.sin(angle) * Qh + np.cos(angle) * Qk
-#    funitc_vals[i] = _getvals(funitc, round(qh_rot), round(qk_rot))
-#    intens_vals[i] = _getvals(Iobs[i], round(qh_rot), round(qk_rot))
-#    phases[i] = 2 * np.pi * (round(qh_rot) * dx_vals[i] + round(qk_rot) * dy_vals[i])
-#pramp = np.exp(1j * phases)
-
-
-# Algorithm
-Qh, Qk = (1,1)
-
+Qh, Qk = (20,30)
 ftobj_true_val = _getvals(ftobj, Qh, Qk)
 print("True Value : ", ftobj_true_val)
 funitc_vals = np.zeros(num_frames, dtype=complex)
-intens_vals = np.zeros((num_frames,4), dtype=float)
-phases = np.zeros(num_frames, dtype=float)
+intens_vals = np.zeros(num_frames, dtype=float)
+pramp_vals = np.zeros(num_frames, dtype=complex)
 
 for i in range(num_frames):
-    angle = angle_vals[i]
-    qh_rot = np.cos(angle) * Qh - np.sin(angle) * Qk
-    qk_rot = np.sin(angle) * Qh + np.cos(angle) * Qk
+    angle = -angle_vals[i]
+    qh_r = np.cos(angle) * Qh - np.sin(angle) * Qk
+    qk_r = np.sin(angle) * Qh + np.cos(angle) * Qk
+    funitc_vals[i] = _getvals(funitc, round(qh_r), round(qk_r))
+    intens_vals[i] = _getvals(Iobs[i], round(qh_r), round(qk_r))
+    pramp_vals[i] = np.exp(1j * 2 * np.pi * (round(qh_r) * dx_vals[i] + round(qk_r) * dy_vals[i]))
 
-    qh_floor, qk_floor = np.floor([qh_rot, qk_rot])
-    qh_ceil, qk_ceil = np.ceil([qh_rot, qk_rot])
-    frac_qh, frac_qk = qh_rot - qh_floor, qk_rot - qk_floor
-    qhks = [(qh_floor, qk_floor),
-            (qh_floor, qk_ceil),
-            (qh_ceil, qk_floor),
-            (qh_ceil, qk_ceil)]
-    funitc_vals[i] = [_getvals(funitc, int(qh), int(qk)) for qh, qk in qhks]
-    intens_vals[i] = [_getvals(Iobs[i], int(qh), int(qk)) for qh, qk in qhks]
-    phases[i] = [2 * np.pi * (int(qh) * dx_vals[i] + int(qk) * dy_vals[i]) for qh, qk in qhks]
-pramp = np.exp(1j * phases)
+def compute_model_landscape(real_range, imag_range):
+    real_grid, imag_grid = np.meshgrid(real_range, imag_range, indexing='ij')
+    ftobj_guess_grid = real_grid + 1j * imag_grid
+
+    funitc_vals_ = funitc_vals[:, np.newaxis, np.newaxis]
+    fluence_vals_ = fluence_vals[:, np.newaxis, np.newaxis]
+    pramp_vals_ = pramp_vals[:, np.newaxis, np.newaxis]       
+   
+    ftobj_guess_grid_ = ftobj_guess_grid[np.newaxis, :, :]
+   
+    res = funitc_vals_ + fluence_vals_ * ftobj_guess_grid_ * pramp_vals_
+    Icalc = np.abs(res)**2
+    objfunc = ((Icalc - intens_vals[:, np.newaxis, np.newaxis])**2).sum(0)
+    return objfunc
 
 
-def compute_error_grid(real_range, imag_range, num_frames, funitc_vals, fluence_vals, pramp, intens_vals):
-    R = len(real_range)
-    I = len(imag_range)
-    err_grid = np.zeros((R, I), dtype=float)
+real_range = np.linspace(np.real(ftobj_true_val) - 10, np.real(ftobj_true_val) + 10, 200)
+imag_range = np.linspace(np.imag(ftobj_true_val) - 10, np.imag(ftobj_true_val) + 10, 200)
 
-    for rr in range(R):
-        for cc in range(I):
-            ftobj_guess = real_range[rr] + 1j * imag_range[cc]
-            model_frames = np.zeros(num_frames, dtype=float)
+error = compute_model_landscape(real_range, imag_range)
+min_index = np.unravel_index(np.argmin(error), error.shape)
+min_real = real_range[min_index[0]]
+min_imag = imag_range[min_index[1]]
 
-            for i in range(num_frames):
-                model = np.abs(funitc_vals[i] + fluence_vals[i] * ftobj_guess * pramp[i])**2
-                model_frames[i] = model
+plt.contourf(real_range, imag_range, error.T, levels=50, cmap='viridis')
+plt.scatter(np.real(ftobj_true_val), np.imag(ftobj_true_val), color='red', marker='x', s=100, label='True Value')
+plt.scatter(min_real, min_imag, color='blue', marker='o', s=100, label='Real Minimum')
 
-            err = (model_frames - intens_vals)**2
-            err_grid[rr, cc] = err.sum()
+def compute_error_grid(real_range, imag_range):
+    real_grid, imag_grid = np.meshgrid(real_range, imag_range, indexing='ij')
+    ftobj_guess_grid = real_grid + 1j * imag_grid
 
+    funitc_vals_ = funitc_vals[:, np.newaxis, np.newaxis]
+    fluence_vals_ = fluence_vals[:, np.newaxis, np.newaxis]
+    pramp_vals_ = pramp_vals[:, np.newaxis, np.newaxis]       
+    intens_vals_ = intens_vals[:, np.newaxis, np.newaxis]
+   
+    ftobj_guess_grid_ = ftobj_guess_grid[np.newaxis, :, :]
+   
+    res = funitc_vals_ + fluence_vals_ * ftobj_guess_grid_ * pramp_vals_
+    Icalc = np.abs(res)**2
+    err = (Icalc - intens_vals_)**2
+    err_grid = err.sum(axis=0)
     return err_grid
-
-
-
-#def compute_error_grid(real_range, imag_range):
-#    real_grid, imag_grid = np.meshgrid(real_range, imag_range, indexing='ij')
-#    ftobj_guess_grid = real_grid + 1j * imag_grid
-
-#    funitc_vals_ = funitc_vals[:, np.newaxis, np.newaxis]
-#    fluence_vals_ = fluence_vals[:, np.newaxis, np.newaxis]
-#    pramp_ = pramp[:, np.newaxis, np.newaxis]       
-#    intens_vals_ = intens_vals[:, np.newaxis, np.newaxis]
-    
-#    ftobj_guess_grid_ = ftobj_guess_grid[np.newaxis, :, :]
-    
-#    res = funitc_vals_ + fluence_vals_ * ftobj_guess_grid_ * pramp_
-#    Icalc = np.abs(res)**2
-#    err = (Icalc - intens_vals_)**2
-#    err_grid = err.sum(axis=0)
-#    return err_grid
 
 # Coarse search
 coarse_size = 100
@@ -173,7 +151,7 @@ max_refinement_steps = 100
 grid_size = 40
 initial_range = 20.0
 range_decay = 0.5
-convergence_threshold = 1e-4
+convergence_threshold = 1e-5
 
 current_best_real = coarse_best_real
 current_best_imag = coarse_best_imag
@@ -195,7 +173,8 @@ for step in range(max_refinement_steps):
     current_range *= range_decay
 
     improvement =  np.abs(fitted_value - prev_fitted_value)
-    print(f"Refinement step {step+1}/{max_refinement_steps}, Best guess: {fitted_value}, Improvement: {improvement}")
+    diff = np.abs(ftobj_true_val - fitted_value)/np.abs(ftobj_true_val)
+    print(f"Refinement Step {step+1}/{max_refinement_steps}, Best Guess: {fitted_value:.2f}, Improvement: {improvement:.2e}, Diff: {diff:.2e}")
     # Check convergence
     if improvement < convergence_threshold:
         print(f"Converged at step {step+1}, improvement below {convergence_threshold}")
@@ -204,6 +183,61 @@ for step in range(max_refinement_steps):
 
 print("True Value :", ftobj_true_val)
 print("Fitted value (after adaptive refinement):", fitted_value)
+
+
+
+
+
+#############################  Nearest Neighbour Approximation
+# Algorithm
+Qh, Qk = (5,1)
+ftobj_true_val = _getvals(ftobj, Qh, Qk)
+print("True Value : ", ftobj_true_val)
+funitc_vals = np.zeros((num_frames,4), dtype=complex)
+intens_vals = np.zeros((num_frames,4), dtype=float)
+pramp_vals = np.zeros((num_frames,4), dtype=complex)
+
+for i in range(num_frames):
+    angle = -angle_vals[i]
+    qh_r = np.cos(angle) * Qh - np.sin(angle) * Qk
+    qk_r = np.sin(angle) * Qh + np.cos(angle) * Qk
+
+    qh_floor, qk_floor = np.floor([qh_r, qk_r])
+    qh_ceil, qk_ceil = np.ceil([qh_r, qk_r])
+
+    qhks = [(qh_floor, qk_floor),
+            (qh_floor, qk_ceil),
+            (qh_ceil, qk_floor),
+            (qh_ceil, qk_ceil)]
+
+    frac_qh, frac_qk = qh_r - qh_floor, qk_r - qk_floor
+    weights = [(1 - frac_qh) * (1 - frac_qk),
+               (1 - frac_qh) * frac_qk,
+               frac_qh * (1 - frac_qk),
+               frac_qh * frac_qk]
+
+    funitc_vals[i] = [_getvals(funitc, int(qh), int(qk)) for qh, qk in qhks]
+    intens_vals[i] = [_getvals(Iobs[i], int(qh), int(qk)) for qh, qk in qhks]
+    pramp_vals[i] = [np.exp(1j * 2 * np.pi * (int(qh) * dx_vals[i] + int(qk) * dy_vals[i])) for qh, qk in qhks]
+
+
+def compute_error_grid(real_range, imag_range):
+    R = len(real_range)
+    I = len(imag_range)
+    err_grid = np.zeros((R, I), dtype=float)
+
+    for rr in range(R):
+        for cc in range(I):
+            ftobj_guess = real_range[rr] + 1j * imag_range[cc]
+            Icalc_frames = np.zeros((num_frames, 4), dtype=float)
+
+            for i in range(num_frames):
+                Icalc = [np.abs(funitc_vals[i][j] + fluence_vals[i] * ftobj_guess * pramp[i][j])**2 for j in range(4)]
+                errors = [(Icalc[j] - intens_vals[i][j])**2 for j in range(4)]
+                Icalc_frames[i] = sum(weights[j] * errors[j] for j in range(4))
+            err_grid[rr, cc] = Icalc_frames.sum()
+    return err_grid
+
 
 
 
