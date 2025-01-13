@@ -29,14 +29,6 @@ def phase_ramp(N, shiftx, shifty):
     qk -= cen
     return cp.exp(1j * 2.0 * cp.pi * (qh * shiftx + qk * shifty))
 
-def _getvals(array, N, Qh, Qk):
-    cen = N // 2
-    h_index = Qh + cen
-    k_index = Qk + cen
-    if 0 <= h_index < N and 0 <= k_index < N:
-        return array[h_index, k_index]
-    return 0
-
 class ObjectOptimizer:
     def __init__(self, data_file, output_file):
         self.data_file = data_file
@@ -65,15 +57,17 @@ class ObjectOptimizer:
 
     def compute_error_grid(self, real_range, imag_range,
                            funitc_vals, fluence_vals, pramp_vals, intens_vals):
-
         real_grid, imag_grid = cp.meshgrid(real_range, imag_range, indexing='ij')
         ftobj_guess_grid = real_grid + 1j * imag_grid
-
-        Icalc = cp.abs(funitc_vals[:, None, None] + fluence_vals[:, None, None] *
-                                                    ftobj_guess_grid[None, :, :] *
-                                                    pramp_vals[:, None, None])**2
+        
+        Icalc = cp.abs(
+            funitc_vals[:, None, None]
+            + fluence_vals[:, None, None] * ftobj_guess_grid[None, :, :]
+            * pramp_vals[:, None, None]
+        )**2
 
         err = (Icalc - intens_vals[:, None, None])**2
+        
         return err.sum(axis=0)
 
     def solve(self):
@@ -81,42 +75,52 @@ class ObjectOptimizer:
         total_pixels = (2 * self.cen + 1)**2
         pixel_counter = 0
 
+        angles = -self.angles
+
         for Qh_ in range(-self.cen, self.cen + 1):
             for Qk_ in range(-self.cen, self.cen + 1):
                 pixel_counter += 1
                 print(f"\rProcessing pixel {pixel_counter}/{total_pixels} ", end="")
 
-                funitc_vals = cp.zeros(self.NUM_FRAMES, dtype=complex)
-                intens_vals = cp.zeros(self.NUM_FRAMES, dtype=float)
-                pramp_vals = cp.zeros(self.NUM_FRAMES, dtype=complex)
+                qh_r = cp.cos(angles) * Qh_ - cp.sin(angles) * Qk_
+                qk_r = cp.sin(angles) * Qh_ + cp.cos(angles) * Qk_
 
-                for i in range(self.NUM_FRAMES):
-                    angle = -self.angles[i]
-                    qh_r = cp.cos(angle) * Qh_ - cp.sin(angle) * Qk_
-                    qk_r = cp.sin(angle) * Qh_ + cp.cos(angle) * Qk_
+                qh_r_rounded = cp.around(qh_r).astype(cp.int32)
+                qk_r_rounded = cp.around(qk_r).astype(cp.int32)
 
+                h_index = qh_r_rounded + self.cen
+                k_index = qk_r_rounded + self.cen
 
-                    qh_r_rounded = int(cp.around(qh_r).get())
-                    qk_r_rounded = int(cp.around(qk_r).get())
+                cp.clip(h_index, 0, self.N - 1, out=h_index)
+                cp.clip(k_index, 0, self.N - 1, out=k_index)
 
-                    funitc_vals[i] = _getvals(self.funitc, self.N, qh_r_rounded, qk_r_rounded)
-                    intens_vals[i] = _getvals(self.intens[i], self.N, qh_r_rounded, qk_r_rounded)
-                    pramp_vals[i] = cp.exp(1j * 2 * cp.pi * (qh_r_rounded * self.shiftx[i] +
-                                                             qk_r_rounded * self.shifty[i]))
+                funitc_vals = self.funitc[h_index, k_index]
+                
+                intens_vals = self.intens[cp.arange(self.NUM_FRAMES), h_index, k_index]
 
-                coarse_size = 100
-                initial_range = 20
-                coarse_real_range = cp.linspace(-3000, 3000, coarse_size)
-                coarse_imag_range = cp.linspace(-3000, 3000, coarse_size)
-                err_grid_coarse = self.compute_error_grid(coarse_real_range, coarse_imag_range,
-                                                          funitc_vals, self.fluence, pramp_vals, intens_vals)
+                pramp_vals = cp.exp(
+                    1j * 2 * cp.pi * (qh_r_rounded * self.shiftx + qk_r_rounded * self.shifty)
+                )
 
-                min_index_coarse = cp.unravel_index(cp.argmin(err_grid_coarse), err_grid_coarse.shape)
+                coarse_size = 2*100
+                coarse_real_range = cp.linspace(-2*3000, 2*3000, coarse_size)
+                coarse_imag_range = cp.linspace(-2*3000, 2*3000, coarse_size)
+
+                err_grid_coarse = self.compute_error_grid(coarse_real_range,
+                                                          coarse_imag_range,
+                                                          funitc_vals,
+                                                          self.fluence,
+                                                          pramp_vals,
+                                                          intens_vals)
+
+                min_index_coarse = cp.unravel_index(cp.argmin(err_grid_coarse),
+                                                    err_grid_coarse.shape)
                 coarse_best_real = coarse_real_range[min_index_coarse[0]]
                 coarse_best_imag = coarse_imag_range[min_index_coarse[1]]
 
                 current_best_real = coarse_best_real
                 current_best_imag = coarse_best_imag
+                initial_range = 20
                 current_range = initial_range
                 prev_fitted_value = coarse_best_real + 1j * coarse_best_imag
 
@@ -124,16 +128,24 @@ class ObjectOptimizer:
                 range_decay = 0.5
                 convergence_threshold = 1e-5
                 max_refinement_steps = 100
+
                 for step in range(max_refinement_steps):
                     fine_real_range = cp.linspace(current_best_real - current_range,
-                                                  current_best_real + current_range, grid_size)
+                                                  current_best_real + current_range,
+                                                  grid_size)
                     fine_imag_range = cp.linspace(current_best_imag - current_range,
-                                                  current_best_imag + current_range, grid_size)
+                                                  current_best_imag + current_range,
+                                                  grid_size)
 
-                    err_grid_fine = self.compute_error_grid(fine_real_range, fine_imag_range,
-                                                            funitc_vals, self.fluence, pramp_vals, intens_vals)
+                    err_grid_fine = self.compute_error_grid(fine_real_range,
+                                                            fine_imag_range,
+                                                            funitc_vals,
+                                                            self.fluence,
+                                                            pramp_vals,
+                                                            intens_vals)
 
-                    min_index_fine = cp.unravel_index(cp.argmin(err_grid_fine), err_grid_fine.shape)
+                    min_index_fine = cp.unravel_index(cp.argmin(err_grid_fine),
+                                                      err_grid_fine.shape)
                     fine_best_real = fine_real_range[min_index_fine[0]]
                     fine_best_imag = fine_imag_range[min_index_fine[1]]
 
