@@ -1,130 +1,164 @@
 import cupy as cp
-import h5py
-import sys
 from cupyx.scipy.ndimage import map_coordinates
-from utils import get_vals
+from cupyx.scipy import ndimage
+import h5py
+
+def do_fft(obj):
+    return cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(obj)))
+
+def do_ifft(ftobj):
+    return cp.fft.fftshift(cp.fft.ifftn(cp.fft.ifftshift(ftobj)))
+
+def rotate_ft(N, ftobj, angle):
+    cen = N // 2
+    qh, qk = cp.meshgrid(cp.arange(N), cp.arange(N), indexing='ij')
+    qk -= cen
+    qh -= cen
+
+    qh_rot = cp.cos(angle) * qh - cp.sin(angle) * qk
+    qk_rot = cp.sin(angle) * qh + cp.cos(angle) * qk
+    coords = cp.stack([qh_rot + cen, qk_rot + cen])
+
+    rotated_ft = map_coordinates(ftobj, coords, order=1, mode='nearest')
+    return rotated_ft
+
+def phase_ramp(N, shiftx, shifty):
+    cen = N // 2
+    qh, qk = cp.meshgrid(cp.arange(N), cp.arange(N), indexing='ij')
+    qh -= cen
+    qk -= cen
+    return cp.exp(1j * 2.0 * cp.pi * (qh * shiftx + qk * shifty))
+
+def _getvals(array, N, Qh, Qk):
+    cen = N // 2
+    h_index = Qh + cen
+    k_index = Qk + cen
+    if 0 <= h_index < N and 0 <= k_index < N:
+        return array[h_index, k_index]
+    return 0
 
 class ObjectOptimizer:
-    def __init__(self, itern, N, shifts, fluence, angles, ftobj, data_file, output_file, apply_orientation=False):
-        self.N = N
+    def __init__(self, data_file, output_file):
+        self.data_file = data_file
+        self.output_file = output_file
+        self.load_data()
+
         self.cen = self.N // 2
-        self.ITER = itern
-        self.SWITCH_TO_ALLPIX_AT = 100
+        self.qh, self.qk = cp.meshgrid(cp.arange(self.N), cp.arange(self.N), indexing='ij')
+        self.qk -= self.cen
+        self.qh -= self.cen
 
-        self.DATA_FILE = data_file
-        self.OUTPUT_FILE = output_file
+    def load_data(self):
+        with h5py.File(self.data_file, "r") as f:
+            self.ftobj = cp.array(f["ftobj"][:])
+            self.funitc = cp.array(f["funitc"][:])
+            self.intens = cp.array(f["intens"][:])
+            self.angles = cp.array(f["angles"][:])
+            self.fluence = cp.array(f["fluence"][:])
+            self.shifts = cp.array(f["shifts"][:])
 
-        self.SHIFTS = cp.asarray(shifts)
-        self.FLUENCE = cp.asarray(fluence)
-        self.prev_ftobj = cp.asarray(ftobj)
-        self.load_dataset()
+        self.shiftx = self.shifts[:, 0]
+        self.shifty = self.shifts[:, 1]
 
-        self.APPLY_ORIENTATION = apply_orientation
-        self.ANGLES = cp.asarray(angles)
+        self.N = self.ftobj.shape[0]
+        self.NUM_FRAMES = self.intens.shape[0]
 
-    def load_dataset(self):
-        # Load Dataset
-        with h5py.File(self.DATA_FILE, 'r') as f:
-            self.intens_vals = cp.asarray(f['intens'])
-            self.funitc = cp.asarray(f['funitc'])
-            self.NUM_SAMPLES = self.intens_vals.shape[0]
+    def compute_error_grid(self, real_range, imag_range,
+                           funitc_vals, fluence_vals, pramp_vals, intens_vals):
 
-    def rotate_ft(self, ftobj, angle_deg):
-        """ Rotate the Fourier transform object using scipy's map_coordinates """
-        angle_rad = cp.deg2rad(angle_deg)
-        qh, qk = cp.indices((self.N, self.N))
-        qh = qh - self.cen
-        qk = qk - self.cen
-        qh_rot = cp.cos(angle_rad) * qh - cp.sin(angle_rad) * qk
-        qk_rot = cp.sin(angle_rad) * qh + cp.cos(angle_rad) * qk
-        coords = cp.array([qh_rot + self.cen, qk_rot + self.cen])
-        rotated_ft = map_coordinates(ftobj, coords, order=3, mode='wrap')
-        return rotated_ft
+        real_grid, imag_grid = cp.meshgrid(real_range, imag_range, indexing='ij')
+        ftobj_guess_grid = real_grid + 1j * imag_grid
 
-    # GRID SEARCH for each pixel
-    def optimize_pixel(self, h, k, angle):
-        funitc_val = get_vals(self.funitc, self.cen, h, k)
-        intens_vals = self.intens_vals[:, h + self.cen, k + self.cen]
-        phases = 2 * cp.pi * (h * self.SHIFTS[:, 0] + k * self.SHIFTS[:, 1])
-        pramp = cp.exp(1j * phases)
+        Icalc = cp.abs(funitc_vals[:, None, None] + fluence_vals[:, None, None] *
+                                                    ftobj_guess_grid[None, :, :] *
+                                                    pramp_vals[:, None, None])**2
 
-        def objective(ftobj_vals):
-            F = funitc_val + self.FLUENCE[:, cp.newaxis] * ftobj_vals * pramp[:, cp.newaxis]
-            model_int = cp.abs(F) ** 2
-            residuals = model_int - intens_vals[:, cp.newaxis]
-            return cp.sum(residuals ** 2, axis=0)
+        err = (Icalc - intens_vals[:, None, None])**2
+        return err.sum(axis=0)
 
-        # Coarse grid search
-        real_vals = cp.linspace(-3*2000, 3*2000, 200)
-        imag_vals = cp.linspace(-3*2000, 3*2000, 200)
-        real_grid, imag_grid = cp.meshgrid(real_vals, imag_vals)
-        ftobj_vals = (real_grid + 1j * imag_grid).ravel()
+    def solve(self):
+        results = cp.zeros((self.N, self.N), dtype=complex)
+        total_pixels = (2 * self.cen + 1)**2
+        pixel_counter = 0
 
-        if self.APPLY_ORIENTATION:
-            ftobj_vals = self.rotate_ft(ftobj_vals, angle)
+        for Qh_ in range(-self.cen, self.cen + 1):
+            for Qk_ in range(-self.cen, self.cen + 1):
+                pixel_counter += 1
+                print(f"\rProcessing pixel {pixel_counter}/{total_pixels} ", end="")
 
-        errors = objective(ftobj_vals)
-        min_idx = cp.argmin(errors)
-        best_ftobj = ftobj_vals[min_idx]
-        min_error = objective(best_ftobj)
+                funitc_vals = cp.zeros(self.NUM_FRAMES, dtype=complex)
+                intens_vals = cp.zeros(self.NUM_FRAMES, dtype=float)
+                pramp_vals = cp.zeros(self.NUM_FRAMES, dtype=complex)
 
-        # Refinement
-        gsize = 3*200
-        threshold = 1e-8
-        for itr in range(2000):
-            real_range = cp.linspace(best_ftobj.real - gsize, best_ftobj.real + gsize, 10)
-            imag_range = cp.linspace(best_ftobj.imag - gsize, best_ftobj.imag + gsize, 10)
-            real_grid, imag_grid = cp.meshgrid(real_range, imag_range)
-            ftobj_vals = (real_grid + 1j * imag_grid).ravel()
+                for i in range(self.NUM_FRAMES):
+                    angle = -self.angles[i]
+                    qh_r = cp.cos(angle) * Qh_ - cp.sin(angle) * Qk_
+                    qk_r = cp.sin(angle) * Qh_ + cp.cos(angle) * Qk_
 
-            if self.APPLY_ORIENTATION:
-                ftobj_vals = self.rotate_ft(ftobj_vals, angle)
 
-            errors = objective(ftobj_vals)
-            min_idx = cp.argmin(errors)
-            new_best_ftobj = ftobj_vals[min_idx]
-            new_min_error = errors[min_idx]
+                    qh_r_rounded = int(cp.around(qh_r).get())
+                    qk_r_rounded = int(cp.around(qk_r).get())
 
-            if cp.abs(min_error - new_min_error) < threshold:
-                break
+                    funitc_vals[i] = _getvals(self.funitc, self.N, qh_r_rounded, qk_r_rounded)
+                    intens_vals[i] = _getvals(self.intens[i], self.N, qh_r_rounded, qk_r_rounded)
+                    pramp_vals[i] = cp.exp(1j * 2 * cp.pi * (qh_r_rounded * self.shiftx[i] +
+                                                             qk_r_rounded * self.shifty[i]))
 
-            best_ftobj = new_best_ftobj
-            min_error = new_min_error
-            gsize /= 2
+                coarse_size = 100
+                initial_range = 20
+                coarse_real_range = cp.linspace(-3000, 3000, coarse_size)
+                coarse_imag_range = cp.linspace(-3000, 3000, coarse_size)
+                err_grid_coarse = self.compute_error_grid(coarse_real_range, coarse_imag_range,
+                                                          funitc_vals, self.fluence, pramp_vals, intens_vals)
 
-        return best_ftobj, itr
+                min_index_coarse = cp.unravel_index(cp.argmin(err_grid_coarse), err_grid_coarse.shape)
+                coarse_best_real = coarse_real_range[min_index_coarse[0]]
+                coarse_best_imag = coarse_imag_range[min_index_coarse[1]]
 
-    def optimize_all_pixels(self):
-        if self.ITER < self.SWITCH_TO_ALLPIX_AT:
-            radius = 5
-            h_vals = cp.arange(-self.cen, self.cen + 1)
-            k_vals = cp.arange(-self.cen, self.cen + 1)
-            h_grid, k_grid = cp.meshgrid(h_vals, k_vals)
-            mask = cp.sqrt(h_grid**2 + k_grid**2) <= radius
-            h_indices = h_grid[mask]
-            k_indices = k_grid[mask]
-        else:
-            h_indices = cp.arange(-self.cen, self.cen + 1)
-            k_indices = cp.arange(-self.cen, self.cen + 1)
-            h_indices, k_indices = cp.meshgrid(h_indices, k_indices)
-            h_indices = h_indices.ravel()
-            k_indices = k_indices.ravel()
+                current_best_real = coarse_best_real
+                current_best_imag = coarse_best_imag
+                current_range = initial_range
+                prev_fitted_value = coarse_best_real + 1j * coarse_best_imag
 
-        total_pixels = h_indices.size
-        optimized_params = self.prev_ftobj.copy()
-        itrs = []
+                grid_size = 40
+                range_decay = 0.5
+                convergence_threshold = 1e-5
+                max_refinement_steps = 100
+                for step in range(max_refinement_steps):
+                    fine_real_range = cp.linspace(current_best_real - current_range,
+                                                  current_best_real + current_range, grid_size)
+                    fine_imag_range = cp.linspace(current_best_imag - current_range,
+                                                  current_best_imag + current_range, grid_size)
 
-        for idx in range(total_pixels):
-            h = int(h_indices[idx])
-            k = int(k_indices[idx])
-            best_ftobj, itr = self.optimize_pixel(h, k, self.ANGLES)
-            optimized_params[h + self.cen, k + self.cen] = best_ftobj
-            self._print_progress(idx + 1, total_pixels)
-            itrs.append(itr)
+                    err_grid_fine = self.compute_error_grid(fine_real_range, fine_imag_range,
+                                                            funitc_vals, self.fluence, pramp_vals, intens_vals)
 
-        return optimized_params, cp.array(itrs)
+                    min_index_fine = cp.unravel_index(cp.argmin(err_grid_fine), err_grid_fine.shape)
+                    fine_best_real = fine_real_range[min_index_fine[0]]
+                    fine_best_imag = fine_imag_range[min_index_fine[1]]
 
-    def _print_progress(self, count, total):
-        progress = (count / total) * 100
-        print(f"\rOptimized {count}/{total} pixels ({progress:.2f}%)", end='', flush=True)
+                    current_best_real = fine_best_real
+                    current_best_imag = fine_best_imag
+                    fitted_value = current_best_real + 1j * current_best_imag
+                    current_range *= range_decay
+
+                    improvement = cp.abs(fitted_value - prev_fitted_value)
+                    if improvement < convergence_threshold:
+                        break
+                    prev_fitted_value = fitted_value
+
+                results[Qh_ + self.cen, Qk_ + self.cen] = fitted_value
+
+        print("\nSaving results to output file.")
+        with h5py.File(self.output_file, "w") as h5f:
+            h5f.create_dataset("ftobj", data=cp.asnumpy(results))
+
+        print("Reconstruction saved.")
+        return results
+
+if __name__ == "__main__":
+    data_file = "/scratch/mallabhi/lattice_ref/data/K/dataset_ori.h5"
+    output_file = "/scratch/mallabhi/lattice_ref/output/output_ori.h5"
+    optimizer = ObjectOptimizer(data_file, output_file)
+    optimizer.solve()
 
