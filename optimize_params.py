@@ -1,43 +1,29 @@
 import cupy as cp
 import h5py
 from configparser import ConfigParser
-from cupyx.scipy.ndimage import map_coordinates
+import argparse
+
 from utils import get_vals
+from utils_cupy import rotate_arr
+
 
 class ParamOptimizer:
-    def __init__(self, niter, N, ftobj, data_file, output_file, apply_orientation=False, angles=None):
+    def __init__(self, niter, N, ftobj, data_file, output_file, apply_orientation, angles):
         self.N = N
         self.cen = self.N // 2
         self.ITER = niter
-
-        self.DATA_FILE = data_file
-        self.OUTPUT_FILE = output_file
-
+        self.data_file = data_file
+        self.output_file = output_file
         self.ftobj = cp.asarray(ftobj)
         self.load_dataset()
-
         self.APPLY_ORIENTATION = apply_orientation
-        self.ANGLES = cp.asarray(angles)
+        self.angles = cp.asarray(angles)
 
     def load_dataset(self):
-        # Load Dataset
-        with h5py.File(self.DATA_FILE, 'r') as f:
+        with h5py.File(self.data_file, 'r') as f:
             self.intens_vals = cp.asarray(f['intens'])
             self.funitc = cp.asarray(f['funitc'])
 
-    def rotate_ft(self, ftobj, angle_deg):
-        """ Rotate the Fourier transform object using scipy's map_coordinates """
-        angle_rad = cp.deg2rad(angle_deg)
-        qh, qk = cp.indices((self.N, self.N))
-        qh = qh - self.cen
-        qk = qk - self.cen
-        qh_rot = cp.cos(angle_rad) * qh - cp.sin(angle_rad) * qk
-        qk_rot = cp.sin(angle_rad) * qh + cp.cos(angle_rad) * qk
-        coords = cp.array([qh_rot + self.cen, qk_rot + self.cen])
-        rotated_ft = map_coordinates(ftobj, coords, order=3, mode='wrap')
-        return rotated_ft
-
-    # GRID SEARCH METHOD
     def grid_search(self, qh, qk, funitc_vals, ftobj_vals, intens_vals, dx_range, dy_range, fluence_range):
         dx_grid, dy_grid, fluence_grid = cp.meshgrid(dx_range, dy_range, fluence_range, indexing='ij')
         dx_grid = dx_grid.ravel()
@@ -56,7 +42,6 @@ class ParamOptimizer:
 
         return optimal_params, min_error
 
-    # Optimization of Params for each Frame
     def analyze_frame(self, intens, hk, angle):
         hk = cp.array(hk)
         qh, qk = hk[:, 0], hk[:, 1]
@@ -65,31 +50,29 @@ class ParamOptimizer:
         intens_vals = get_vals(intens, self.cen, qh, qk)
 
         if self.APPLY_ORIENTATION:
-            ftobj_vals = get_vals(self.rotate_ft(self.ftobj, angle), self.cen, qh, qk)
+            ftobj_vals = get_vals(rotate_arr(self.N, self.ftobj, angle), self.cen, qh, qk)
         else:
             ftobj_vals = get_vals(self.ftobj, self.cen, qh, qk)
 
-    # COARSE and FINE GRID SEARCH
-        ncoarse = 300
+        ncoarse = 30
         dx_range = cp.linspace(0, 1, ncoarse)
         dy_range = cp.linspace(0, 1, ncoarse)
-        fluence_range = cp.linspace(0.1, 10, ncoarse)
+        fluence_range = cp.linspace(0, 1, ncoarse)
 
-        optimal_params, min_error = self.grid_search(qh, qk, 
-                                                     funitc_vals, ftobj_vals, intens_vals, 
+        optimal_params, min_error = self.grid_search(qh, qk,
+                                                     funitc_vals, ftobj_vals, intens_vals,
                                                      dx_range, dy_range, fluence_range)
         dx0, dy0, fluence0 = optimal_params
 
-        # Refinement loop
         gsize = 0.05
         threshold = 1e-5
         for itr in range(2000):
-            dx_range = cp.linspace(max(dx0 - gsize, 0), min(dx0 + gsize, 1), 10)
-            dy_range = cp.linspace(max(dy0 - gsize, 0), min(dy0 + gsize, 1), 10)
-            fluence_range = cp.linspace(max(fluence0 - 2 * gsize, 0.1), min(fluence0 + 2 * gsize, 10), 10)
+            dx_range = cp.linspace(max(dx0 - 2*gsize, 0), min(dx0 + 2*gsize, 1), 10)
+            dy_range = cp.linspace(max(dy0 - 2*gsize, 0), min(dy0 + 2*gsize, 1), 10)
+            fluence_range = cp.linspace(max(fluence0 - 2*gsize, 0), min(fluence0 + 2*gsize, 1), 10)
 
-            new_params, new_error = self.grid_search(qh, qk, 
-                                                     funitc_vals, ftobj_vals, intens_vals, 
+            new_params, new_error = self.grid_search(qh, qk,
+                                                     funitc_vals, ftobj_vals, intens_vals,
                                                      dx_range, dy_range, fluence_range)
 
             if cp.abs(min_error - new_error) < threshold:
@@ -102,14 +85,18 @@ class ParamOptimizer:
         return (dx0, dy0, fluence0), float(min_error), itr
 
     def optimize_params(self):
-        # RUN OPTIMIZATION for EACH FRAME
-        hk = [(0, 1), (1, 1), (1, 0), (1, -1)]
+        N = 101
+        cen = N // 2
+        qh, qk = cp.indices((N, N))
+        qh -= cen
+        qk -= self.cen
+        hk = cp.array([(h, k) for h, k in zip(qh.flatten(), qk.flatten()) if h**2 + k**2 < 20**2])
         num_frames = self.intens_vals.shape[0]
 
         results = []
         for frame_idx in range(num_frames):
             intens = self.intens_vals[frame_idx]
-            angle = self.ANGLES[frame_idx]
+            angle = self.angles[frame_idx]
             optimal_params, error, itr = self.analyze_frame(intens, hk, angle)
 
             dx, dy, fluence = optimal_params
@@ -127,7 +114,7 @@ class ParamOptimizer:
                 f" Fluence={fluence:.3f}, Error={error:.3e},"
                 f" BreakIter={itr}, Angle={angle:.2f}",
                 flush=True
-                )
+            )
 
         fitted_dx = cp.array([res['dx'] for res in results])
         fitted_dy = cp.array([res['dy'] for res in results])
@@ -136,4 +123,34 @@ class ParamOptimizer:
         itrs = cp.array([res['iter'] for res in results])
 
         return fitted_dx, fitted_dy, fitted_fluence, min_errors, itrs
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Optimize parameters (shifts, fluence) using ParamOptimizer.")
+    parser.add_argument("--config", type=str, help="Path to configuration file", required=True)
+
+    args = parser.parse_args()
+
+    config = ConfigParser()
+    config.read(args.config)
+
+    niter = config.getint("OPTIMIZATION", "num_iteration")
+    N = config.getint("PARAMETERS", "N")
+    data_file = config["FILES"]["data_file"]
+    output_file = config["FILES"]["output_file"]
+    apply_orientation = config.getboolean("ORIENTATION", "apply")
+    with h5py.File(data_file, "r") as f:
+        ftobj = cp.asarray(f["ftobj"][:])
+        angles = cp.asarray(f["angles"][:])
+
+    seed = config.getint("PARAMETERS", "seed")
+    num_frames = config.getint("PARAMETERS", "num_frames")
+
+    optimizer = ParamOptimizer(niter, N, ftobj, data_file, output_file, apply_orientation, angles)
+    fitted_dx, fitted_dy, fitted_fluence, min_errors, itrs = optimizer.optimize_params()
+    with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_params_RIB_10Angs.h5', "w") as f:
+        f['fitted_dx'] = fitted_dx.get()
+        f['fitted_dy'] = fitted_dy.get()
+        f['fitted_fl'] = fitted_fluence.get()
+    print("Optimization Complete.")
 
