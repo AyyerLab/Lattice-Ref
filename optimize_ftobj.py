@@ -1,78 +1,57 @@
 import cupy as cp
-from cupyx.scipy.ndimage import map_coordinates
-from cupyx.scipy import ndimage
 import h5py
+import argparse
+from configparser import ConfigParser
 
-def do_fft(obj):
-    return cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(obj)))
-
-def do_ifft(ftobj):
-    return cp.fft.fftshift(cp.fft.ifftn(cp.fft.ifftshift(ftobj)))
-
-def rotate_ft(N, ftobj, angle):
-    cen = N // 2
-    qh, qk = cp.meshgrid(cp.arange(N), cp.arange(N), indexing='ij')
-    qk -= cen
-    qh -= cen
-
-    qh_rot = cp.cos(angle) * qh - cp.sin(angle) * qk
-    qk_rot = cp.sin(angle) * qh + cp.cos(angle) * qk
-    coords = cp.stack([qh_rot + cen, qk_rot + cen])
-
-    rotated_ft = map_coordinates(ftobj, coords, order=1, mode='nearest')
-    return rotated_ft
 
 def phase_ramp(N, shiftx, shifty):
     cen = N // 2
-    qh, qk = cp.meshgrid(cp.arange(N), cp.arange(N), indexing='ij')
+    qh, qk = cp.meshgrid(cp.arange(N), cp.arange(N), indexing="ij")
     qh -= cen
     qk -= cen
     return cp.exp(1j * 2.0 * cp.pi * (qh * shiftx + qk * shifty))
 
+
 class ObjectOptimizer:
-    def __init__(self, data_file, output_file):
+    def __init__(self, itern, N, shifts, fluence, angles, data_file, output_file):
+        self.N = N
+        self.ITER = itern
+        self.shiftx = shifts[:, 0]
+        self.shifty = shifts[:, 1]
+        self.fluence = fluence
+        self.angles = angles
+
         self.data_file = data_file
         self.output_file = output_file
         self.load_data()
 
         self.cen = self.N // 2
-        self.qh, self.qk = cp.meshgrid(cp.arange(self.N), cp.arange(self.N), indexing='ij')
+        self.qh, self.qk = cp.meshgrid(cp.arange(self.N), cp.arange(self.N), indexing="ij")
         self.qk -= self.cen
         self.qh -= self.cen
 
     def load_data(self):
         with h5py.File(self.data_file, "r") as f:
-            self.ftobj = cp.array(f["ftobj"][:])
             self.funitc = cp.array(f["funitc"][:])
             self.intens = cp.array(f["intens"][:])
-            self.angles = cp.array(f["angles"][:])
-            self.fluence = cp.array(f["fluence"][:])
-            self.shifts = cp.array(f["shifts"][:])
 
-        self.shiftx = self.shifts[:, 0]
-        self.shifty = self.shifts[:, 1]
-
-        self.N = self.ftobj.shape[0]
         self.NUM_FRAMES = self.intens.shape[0]
 
-    def compute_error_grid(self, real_range, imag_range,
-                           funitc_vals, fluence_vals, pramp_vals, intens_vals):
-        real_grid, imag_grid = cp.meshgrid(real_range, imag_range, indexing='ij')
+    def compute_error_grid(self, real_range, imag_range, funitc_vals, fluence_vals, pramp_vals, intens_vals):
+        real_grid, imag_grid = cp.meshgrid(real_range, imag_range, indexing="ij")
         ftobj_guess_grid = real_grid + 1j * imag_grid
-        
+
         Icalc = cp.abs(
             funitc_vals[:, None, None]
-            + fluence_vals[:, None, None] * ftobj_guess_grid[None, :, :]
-            * pramp_vals[:, None, None]
-        )**2
+            + fluence_vals[:, None, None] * ftobj_guess_grid[None, :, :] * pramp_vals[:, None, None]
+        ) ** 2
 
-        err = (Icalc - intens_vals[:, None, None])**2
-        
+        err = (Icalc - intens_vals[:, None, None]) ** 2
         return err.sum(axis=0)
 
     def solve(self):
         results = cp.zeros((self.N, self.N), dtype=complex)
-        total_pixels = (2 * self.cen + 1)**2
+        total_pixels = (2 * self.cen + 1) ** 2
         pixel_counter = 0
 
         angles = -self.angles
@@ -95,57 +74,57 @@ class ObjectOptimizer:
                 cp.clip(k_index, 0, self.N - 1, out=k_index)
 
                 funitc_vals = self.funitc[h_index, k_index]
-                
                 intens_vals = self.intens[cp.arange(self.NUM_FRAMES), h_index, k_index]
+                pramp_vals = cp.exp(1j * 2 * cp.pi * (qh_r_rounded * self.shiftx + qk_r_rounded * self.shifty))
 
-                pramp_vals = cp.exp(
-                    1j * 2 * cp.pi * (qh_r_rounded * self.shiftx + qk_r_rounded * self.shifty)
+                coarse_size = 200
+                coarse_real_range = cp.linspace(-2 * 500, 2 * 500, coarse_size)
+                coarse_imag_range = cp.linspace(-2 * 500, 2 * 500, coarse_size)
+                #coarse_real_range = cp.linspace(-2 * 3000, 2 * 3000, coarse_size)
+                #coarse_imag_range = cp.linspace(-2 * 3000, 2 * 3000, coarse_size)
+
+                err_grid_coarse = self.compute_error_grid(
+                    coarse_real_range,
+                    coarse_imag_range,
+                    funitc_vals,
+                    self.fluence,
+                    pramp_vals,
+                    intens_vals,
                 )
 
-                coarse_size = 2*100
-                coarse_real_range = cp.linspace(-2*3000, 2*3000, coarse_size)
-                coarse_imag_range = cp.linspace(-2*3000, 2*3000, coarse_size)
-
-                err_grid_coarse = self.compute_error_grid(coarse_real_range,
-                                                          coarse_imag_range,
-                                                          funitc_vals,
-                                                          self.fluence,
-                                                          pramp_vals,
-                                                          intens_vals)
-
-                min_index_coarse = cp.unravel_index(cp.argmin(err_grid_coarse),
-                                                    err_grid_coarse.shape)
+                min_index_coarse = cp.unravel_index(cp.argmin(err_grid_coarse), err_grid_coarse.shape)
                 coarse_best_real = coarse_real_range[min_index_coarse[0]]
                 coarse_best_imag = coarse_imag_range[min_index_coarse[1]]
 
                 current_best_real = coarse_best_real
                 current_best_imag = coarse_best_imag
-                initial_range = 20
+                initial_range = 100
                 current_range = initial_range
                 prev_fitted_value = coarse_best_real + 1j * coarse_best_imag
 
                 grid_size = 40
                 range_decay = 0.5
                 convergence_threshold = 1e-5
-                max_refinement_steps = 100
+                max_refinement_steps = 500
 
                 for step in range(max_refinement_steps):
-                    fine_real_range = cp.linspace(current_best_real - current_range,
-                                                  current_best_real + current_range,
-                                                  grid_size)
-                    fine_imag_range = cp.linspace(current_best_imag - current_range,
-                                                  current_best_imag + current_range,
-                                                  grid_size)
+                    fine_real_range = cp.linspace(
+                        current_best_real - current_range, current_best_real + current_range, grid_size
+                    )
+                    fine_imag_range = cp.linspace(
+                        current_best_imag - current_range, current_best_imag + current_range, grid_size
+                    )
 
-                    err_grid_fine = self.compute_error_grid(fine_real_range,
-                                                            fine_imag_range,
-                                                            funitc_vals,
-                                                            self.fluence,
-                                                            pramp_vals,
-                                                            intens_vals)
+                    err_grid_fine = self.compute_error_grid(
+                        fine_real_range,
+                        fine_imag_range,
+                        funitc_vals,
+                        self.fluence,
+                        pramp_vals,
+                        intens_vals,
+                    )
 
-                    min_index_fine = cp.unravel_index(cp.argmin(err_grid_fine),
-                                                      err_grid_fine.shape)
+                    min_index_fine = cp.unravel_index(cp.argmin(err_grid_fine), err_grid_fine.shape)
                     fine_best_real = fine_real_range[min_index_fine[0]]
                     fine_best_imag = fine_imag_range[min_index_fine[1]]
 
@@ -161,16 +140,31 @@ class ObjectOptimizer:
 
                 results[Qh_ + self.cen, Qk_ + self.cen] = fitted_value
 
-        print("\nSaving results to output file.")
-        with h5py.File(self.output_file, "w") as h5f:
-            h5f.create_dataset("ftobj", data=cp.asnumpy(results))
-
-        print("Reconstruction saved.")
         return results
 
+
 if __name__ == "__main__":
-    data_file = "/scratch/mallabhi/lattice_ref/data/K/dataset_ori.h5"
-    output_file = "/scratch/mallabhi/lattice_ref/output/output_ori.h5"
-    optimizer = ObjectOptimizer(data_file, output_file)
-    optimizer.solve()
+    parser = argparse.ArgumentParser(description="Optimize Fourier transform of an object.")
+    parser.add_argument("--config", type=str, help="Path to configuration file", required=True)
+
+    args = parser.parse_args()
+
+    config = ConfigParser()
+    config.read(args.config)
+
+    itern = config.getint("OPTIMIZATION", "num_iteration")
+    N = config.getint("PARAMETERS", "N")
+    data_file = config["FILES"]["data_file"]
+    output_file = config["FILES"]["output_file"]
+    with h5py.File(data_file, "r") as f:
+        shifts = cp.asarray(f["shifts"][:])
+        fluence = cp.asarray(f["fluence"][:])
+        angles = cp.asarray(f["angles"][:])
+
+    optimizer = ObjectOptimizer(itern, N, shifts, fluence, angles, data_file, output_file)
+    results = optimizer.solve()
+
+    with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_ftobj_RIB_10Angs.h5', "w") as f:
+        f['fitted_ftobj'] = results.get()
+    print("\nOptimization Complete. Results saved.")
 
