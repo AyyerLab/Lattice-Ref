@@ -1,51 +1,59 @@
-import numpy as np
+import os
 import h5py
-from scipy import ndimage
-from scipy.optimize import curve_fit
+import argparse
+import numpy as np
 import configparser
+from scipy import ndimage
+
+from utils import do_fft, do_ifft
+from scipy.optimize import curve_fit
+from calc_frc import FRC
 
 class Align:
-    def __init__(self, fitted_ftobj_path, ftobj_path, config_path):
+    def __init__(self, fitted_ftobj, ftobj, config_path):
         config = configparser.ConfigParser()
         config.read(config_path)
-        
-        self.N = int(config['DATA_GENERATION']['N'])
+
+        self.N = int(config['PARAMETERS']['N'])
         self.PIXELS = int(config['OPTIMIZATION']['PIXELS'])
         self.SIGMA = float(config['ALIGN']['SIGMA'])
         self.REGION = tuple(map(int, config['ALIGN']['REGION'].split(',')))
 
-        # Load data
-        with h5py.File(fitted_ftobj_path, 'r') as f:
-            self.fitted_ftobj = f['fitted_ftobj'][:]
-        with h5py.File(ftobj_path, 'r') as f:
-            self.ftobj = f['ftobj'][:]
+        self.fitted_ftobj = self._get_ftobjs(fitted_ftobj, 'fitted_ftobj')
+        self.ftobj = self._get_ftobjs(ftobj, 'ftobj')
 
-    def do_fft(self, obj):
-        return np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(obj)))
-
-    def do_ifft(self, ftobj):
-        return np.fft.fftshift(np.fft.ifftn(np.fft.ifftshift(ftobj)))
+    def _get_ftobjs(self, input_ftobj, dataset_name):
+        if isinstance(input_ftobj, str) and os.path.exists(input_ftobj):
+            with h5py.File(input_ftobj, 'r') as f:
+                return f[dataset_name][:]
+        elif isinstance(input_ftobj, np.ndarray):
+            return input_ftobj
+        else:
+            raise ValueError(f"{dataset_name} input must be a file path (str) or a NumPy array.")
 
     def _get_supp(self, ftobj, sig, pixels):
-        invsuppmask = np.ones((self.N,) * 2, dtype=np.bool_)
-        amodel = np.real(self.do_ifft(ftobj.reshape((self.N,) * 2)))
+        amodel = np.real(do_ifft(ftobj.reshape((self.N,) * 2)))
         samodel = ndimage.gaussian_filter(amodel, sig)
         thresh = np.quantile(samodel, (samodel.size - pixels) / samodel.size)
         invsuppmask = samodel < thresh
         return invsuppmask
 
+    def get_com(self, obj):
+        x, y = np.indices(obj.shape)
+        cx = (np.abs(obj) * x).sum() / np.abs(obj).sum()
+        cy = (np.abs(obj) * y).sum() / np.abs(obj).sum()
+        return cx, cy
+
     def center_obj(self, obj, clean_obj):
-        x, y = np.indices(clean_obj.shape)
-        cx = (np.abs(clean_obj) * x).sum() / np.abs(clean_obj).sum()
-        cy = (np.abs(clean_obj) * y).sum() / np.abs(clean_obj).sum()
-        obj_cen = np.roll(np.abs(obj), (self.N//2 - int(cx), self.N//2 - int(cy)), axis=(0, 1))
+        cx, cy = self.get_com(clean_obj)
+        shift = (self.N // 2 - int(cx), self.N // 2 - int(cy))
+        obj_cen = np.roll(np.abs(obj), shift, axis=(0, 1))
         return obj_cen
 
     def fit_pramp(self, pramp):
         def linear_fun(coords, A, B, C):
             x, y = coords
             return A * x + B * y + C
-
         h, w = pramp.shape
         x = np.arange(w) - w // 2
         y = np.arange(h) - h // 2
@@ -63,30 +71,81 @@ class Align:
         x = np.arange(w) - w // 2
         y = np.arange(h) - h // 2
         X, Y = np.meshgrid(x, y)
-        fit_pramp_vals = (A * X + B * Y + C)
-        fobj_align = fobj * np.exp(1j * fit_pramp_vals)
-        return fobj_align
+        fit_pramp_vals = A * X + B * Y + C
+        ftobj_align = fobj * np.exp(1j * fit_pramp_vals)
+        return ftobj_align
 
     def align(self):
-        tobj = np.abs(self.do_ifft(self.ftobj))
-        fitted_tobj = np.abs(self.do_ifft(self.fitted_ftobj))
+        tobj = np.abs(do_ifft(self.ftobj))
+        fitted_tobj = np.abs(do_ifft(self.fitted_ftobj))
 
         fitted_tobj_copy = fitted_tobj.copy()
         support = self._get_supp(self.fitted_ftobj, self.SIGMA, self.PIXELS)
         fitted_tobj_copy[support] = 0
-
+        
+        # Centering the objects
         fitted_tobj_cen = self.center_obj(fitted_tobj, fitted_tobj_copy)
         tobj_cen = self.center_obj(tobj, tobj)
 
-        pramp = np.angle(self.do_fft(tobj_cen) / self.do_fft(fitted_tobj_cen))
-        fitted_ftobj_align = self.fix_phase(self.do_fft(fitted_tobj_cen), pramp, self.REGION)
-        return fitted_ftobj_align, self.do_fft(tobj_cen)
+        # Rotation
+        frc = FRC(obj1=tobj_cen, obj2=fitted_tobj_cen, verbose=True)
+        _, _, best_ang = frc.calc_rot(binsize=1.0, num_rot=1800, do_abs=False)
 
+        rotfmodel = np.empty_like(do_fft(fitted_tobj_cen))
+        rotfmodel.real = ndimage.rotate(do_fft(fitted_tobj_cen).real, best_ang, order=1, prefilter=False, reshape=False)
+        rotfmodel.imag = ndimage.rotate(do_fft(fitted_tobj_cen).imag, best_ang, order=1, prefilter=False, reshape=False)
+        rot_fitted_tobj_cen = do_ifft(rotfmodel)
 
+        # Phase correction
+        pramp = np.angle(do_fft(tobj_cen) / do_fft(rot_fitted_tobj_cen))
+        fitted_ftobj_aligned = self.fix_phase(do_fft(rot_fitted_tobj_cen), pramp, self.REGION)
 
-# IPYTHON EXECUTION
-#ftobj_path = '/path/to/dataset.h5'
-#fitted_ftobj_path = '/path/to/fitted_dataset.h5'
-#aligner = Align(ftobj_path, fitted_ftobj_path)
-#aligned_fitted_ftobj, aligned_ftobj = aligner.align()
+        return do_ifft(fitted_ftobj_aligned), tobj_cen, pramp
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Provide file names for fitted_ftobj, ftobj, and a configuration file. Optionally set a base path."
+    )
+    parser.add_argument(
+        "--fitted_ftobj", type=str, required=True,
+        help="Filename of the HDF5 file containing the 'fitted_ftobj' dataset."
+    )
+    parser.add_argument(
+        "--ftobj", type=str, required=True,
+        help="Filename of the HDF5 file containing the 'ftobj' dataset."
+    )
+        
+    parser.add_argument(
+        "--output", type=str, required=True,
+        help="Filename of the HDF5 file containing the 'aligned' dataset."
+    )
+    parser.add_argument(
+        "--config", type=str, required=True,
+        help="Filename of the configuration file."
+    )
+    return parser.parse_args()
+
+def save_output(filename, fitted_tobj_aligned, tobj_aligned, pramp):
+    with h5py.File(filename, "w") as f:
+        f.create_dataset("fitted_tobj_aligned", data=fitted_tobj_aligned)
+        f.create_dataset("tobj_aligned", data=tobj_aligned)
+        f.create_dataset("pramp", data=pramp)
+
+def main():
+    args = parse_args()
+
+    fitted_ftobj_ = os.path.join('/scratch/mallabhi/lattice_ref/output/', args.fitted_ftobj)
+    ftobj_ = os.path.join('/scratch/mallabhi/lattice_ref/data/K/', args.ftobj)
+    output_ = os.path.join('/scratch/mallabhi/lattice_ref/output/', args.output)
+    config_path = args.config
+
+    aligner = Align(fitted_ftobj_, ftobj_, config_path)
+    fitted_tobj_aligned, tobj_aligned, pramp = aligner.align()
+
+    output_filename = output_
+    save_output(output_filename, fitted_tobj_aligned, tobj_aligned, pramp)
+
+if __name__ == '__main__':
+    main()
+
 
