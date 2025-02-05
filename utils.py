@@ -1,17 +1,6 @@
 import numpy as np
 from scipy.ndimage import map_coordinates
 
-def get_vals(array, cen, h, k):
-    qh = h + cen
-    qk = k + cen
-    return array[qh, qk]
-
-def do_fft(obj):
-    return np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(obj)))
-
-def do_ifft(ftobj):
-    return np.fft.fftshift(np.fft.ifftn(np.fft.ifftshift(ftobj)))
-
 def rotate_arr(N, arr, angle):
     cen = N // 2
     qh, qk = np.indices((N, N))
@@ -23,6 +12,16 @@ def rotate_arr(N, arr, angle):
     rotated_arr = map_coordinates(arr, coords, order=1, mode='nearest')
     return rotated_arr
 
+def do_fft(obj):
+    return np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(obj)))
+
+def do_ifft(ftobj):
+    return np.fft.fftshift(np.fft.ifftn(np.fft.ifftshift(ftobj)))
+
+def get_vals(array, cen, h, k):
+    qh = h + cen
+    qk = k + cen
+    return array[qh, qk]
 
 def init_tobj(N, pixels):
     obj = np.zeros((N,N))
