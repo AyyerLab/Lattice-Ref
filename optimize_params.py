@@ -8,7 +8,7 @@ from utils_cupy import rotate_arr
 
 
 class ParamOptimizer:
-    def __init__(self, niter, N, ftobj, data_file, output_file, apply_orientation, angles):
+    def __init__(self, niter, N, ftobj, data_file, output_file, angles):
         self.N = N
         self.cen = self.N // 2
         self.ITER = niter
@@ -16,7 +16,6 @@ class ParamOptimizer:
         self.output_file = output_file
         self.ftobj = cp.asarray(ftobj)
         self.load_dataset()
-        self.APPLY_ORIENTATION = apply_orientation
         self.angles = cp.asarray(angles)
 
     def load_dataset(self):
@@ -49,10 +48,7 @@ class ParamOptimizer:
         funitc_vals = get_vals(self.funitc, self.cen, qh, qk)
         intens_vals = get_vals(intens, self.cen, qh, qk)
 
-        if self.APPLY_ORIENTATION:
-            ftobj_vals = get_vals(rotate_arr(self.N, self.ftobj, angle), self.cen, qh, qk)
-        else:
-            ftobj_vals = get_vals(self.ftobj, self.cen, qh, qk)
+        ftobj_vals = get_vals(rotate_arr(self.N, self.ftobj, angle), self.cen, qh, qk)
 
         ncoarse = 30
         dx_range = cp.linspace(0, 1, ncoarse)
@@ -111,8 +107,8 @@ class ParamOptimizer:
             print(
                 f"ITER {self.ITER}: FRAME {frame_idx + 1}/{num_frames}: "
                 f" Dx={dx:.3f}, Dy={dy:.3f},"
-                f" Fluence={fluence:.3f}, Error={error:.3e},"
-                f" BreakIter={itr}, Angle={angle:.2f}",
+                f" Fluence={fluence:.3f},"
+                f" Angle={angle:.2f}",
                 flush=True
             )
 
@@ -138,7 +134,6 @@ if __name__ == "__main__":
     N = config.getint("PARAMETERS", "N")
     data_file = config["FILES"]["data_file"]
     output_file = config["FILES"]["output_file"]
-    apply_orientation = config.getboolean("ORIENTATION", "apply")
     with h5py.File(data_file, "r") as f:
         ftobj = cp.asarray(f["ftobj"][:])
         angles = cp.asarray(f["angles"][:])
@@ -146,7 +141,7 @@ if __name__ == "__main__":
     seed = config.getint("PARAMETERS", "seed")
     num_frames = config.getint("PARAMETERS", "num_frames")
 
-    optimizer = ParamOptimizer(niter, N, ftobj, data_file, output_file, apply_orientation, angles)
+    optimizer = ParamOptimizer(niter, N, ftobj, data_file, output_file, angles)
     fitted_dx, fitted_dy, fitted_fluence, min_errors, itrs = optimizer.optimize_params()
     with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_params_RIB_10Angs.h5', "w") as f:
         f['fitted_dx'] = fitted_dx.get()
