@@ -1,4 +1,5 @@
 import cupy as cp
+from cupyx.scipy import ndimage
 from cupyx.scipy.ndimage import map_coordinates
 
 def rotate_arr(N, arr, angle):
@@ -17,3 +18,12 @@ def do_fft(obj):
 
 def do_ifft(ftobj):
     return cp.fft.fftshift(cp.fft.ifftn(cp.fft.ifftshift(ftobj)))
+
+def shrinkwrap(N, ftobj, pixels, sig):
+    invsuppmask = cp.ones((N,) * 2, dtype=cp.bool_)
+    amodel = cp.real(do_ifft(ftobj.reshape((N,) * 2)))
+    samodel = ndimage.gaussian_filter(amodel, sig)
+    thresh = cp.quantile(samodel, (samodel.size - pixels) / samodel.size)
+    invsuppmask = samodel < thresh
+    amodel[invsuppmask] = 0
+    return do_fft(amodel)
