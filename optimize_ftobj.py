@@ -11,7 +11,6 @@ def phase_ramp(N, shiftx, shifty):
     qk -= cen
     return cp.exp(1j * 2.0 * cp.pi * (qh * shiftx + qk * shifty))
 
-
 class ObjectOptimizer:
     def __init__(self, itern, N, shifts, fluence, angles, data_file, output_file):
         self.N = N
@@ -29,6 +28,11 @@ class ObjectOptimizer:
         self.qh, self.qk = cp.meshgrid(cp.arange(self.N), cp.arange(self.N), indexing="ij")
         self.qk -= self.cen
         self.qh -= self.cen
+
+        self.coarse_real_range = cp.linspace(-2 * 500, 2 * 500, 200)
+        self.coarse_imag_range = cp.linspace(-2 * 500, 2 * 500, 200)
+        #self.coarse_real_range = cp.linspace(-2 * 3000, 2 * 3000, 200)
+        #self.coarse_imag_range = cp.linspace(-2 * 3000, 2 * 3000, 200)
 
     def load_data(self):
         with h5py.File(self.data_file, "r") as f:
@@ -59,7 +63,7 @@ class ObjectOptimizer:
         for Qh_ in range(-self.cen, self.cen + 1):
             for Qk_ in range(-self.cen, self.cen + 1):
                 pixel_counter += 1
-                print(f"\rProcessing pixel {pixel_counter}/{total_pixels} ", end="")
+                print(f"\rProcessing pixel {pixel_counter}/{total_pixels} ", flush=True, end="")
 
                 qh_r = cp.cos(angles) * Qh_ - cp.sin(angles) * Qk_
                 qk_r = cp.sin(angles) * Qh_ + cp.cos(angles) * Qk_
@@ -77,15 +81,10 @@ class ObjectOptimizer:
                 intens_vals = self.intens[cp.arange(self.NUM_FRAMES), h_index, k_index]
                 pramp_vals = cp.exp(1j * 2 * cp.pi * (qh_r_rounded * self.shiftx + qk_r_rounded * self.shifty))
 
-                coarse_size = 200
-                coarse_real_range = cp.linspace(-2 * 500, 2 * 500, coarse_size)
-                coarse_imag_range = cp.linspace(-2 * 500, 2 * 500, coarse_size)
-                #coarse_real_range = cp.linspace(-2 * 3000, 2 * 3000, coarse_size)
-                #coarse_imag_range = cp.linspace(-2 * 3000, 2 * 3000, coarse_size)
 
                 err_grid_coarse = self.compute_error_grid(
-                    coarse_real_range,
-                    coarse_imag_range,
+                    self.coarse_real_range,
+                    self.coarse_imag_range,
                     funitc_vals,
                     self.fluence,
                     pramp_vals,
@@ -93,8 +92,8 @@ class ObjectOptimizer:
                 )
 
                 min_index_coarse = cp.unravel_index(cp.argmin(err_grid_coarse), err_grid_coarse.shape)
-                coarse_best_real = coarse_real_range[min_index_coarse[0]]
-                coarse_best_imag = coarse_imag_range[min_index_coarse[1]]
+                coarse_best_real = self.coarse_real_range[min_index_coarse[0]]
+                coarse_best_imag = self.coarse_imag_range[min_index_coarse[1]]
 
                 current_best_real = coarse_best_real
                 current_best_imag = coarse_best_imag
@@ -141,7 +140,6 @@ class ObjectOptimizer:
                 results[Qh_ + self.cen, Qk_ + self.cen] = fitted_value
 
         return results
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Optimize Fourier transform of an object.")
