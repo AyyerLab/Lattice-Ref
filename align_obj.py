@@ -82,7 +82,7 @@ class Align:
         fitted_tobj_copy = fitted_tobj.copy()
         support = self._get_supp(self.fitted_ftobj, self.SIGMA, self.PIXELS)
         fitted_tobj_copy[support] = 0
-        
+
         # Centering the objects
         fitted_tobj_cen = self.center_obj(fitted_tobj, fitted_tobj_copy)
         tobj_cen = self.center_obj(tobj, tobj)
@@ -96,7 +96,7 @@ class Align:
         rotfmodel.imag = ndimage.rotate(do_fft(fitted_tobj_cen).imag, best_ang, order=1, prefilter=False, reshape=False)
         rot_fitted_tobj_cen = do_ifft(rotfmodel)
 
-        # Phase correction
+        #Phase correction
         pramp = np.angle(do_fft(tobj_cen) / do_fft(rot_fitted_tobj_cen))
         fitted_ftobj_aligned = self.fix_phase(do_fft(rot_fitted_tobj_cen), pramp, self.REGION)
 
@@ -114,7 +114,7 @@ def parse_args():
         "--ftobj", type=str, required=True,
         help="Filename of the HDF5 file containing the 'ftobj' dataset."
     )
-        
+
     parser.add_argument(
         "--output", type=str, required=True,
         help="Filename of the HDF5 file containing the 'aligned' dataset."
