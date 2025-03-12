@@ -9,16 +9,16 @@ from utils import rotate_arr, do_fft, do_ifft
 from config_functions import makedata_config
 
 class DataGenerator:
-    def __init__(self, n, scale, num_frames, seed, sample, add_noise, noise_k, data_file):
+    def __init__(self, n, scale, num_frames, seed, sample, add_noise, data_file, exposure_time, background_sqr):
         self.N = n
         self.SCALE = scale
         self.NUM_FRAMES = num_frames
         self.SEED = seed
         self.SAMPLE = sample
-
         self.ADD_NOISE = add_noise
-        self.NOISE_K = noise_k
         self.DATA_FILE = data_file
+        self.EXPOSURE_TIME = exposure_time
+        self.BACKGROUND = np.full((self.N, self.N), np.sqrt(background_sqr))
 
         self.cen = self.N // 2
         self.qh, self.qk = np.indices((self.N, self.N))
@@ -33,8 +33,7 @@ class DataGenerator:
         np.random.seed(self.SEED)
         self.dx_vals = np.random.uniform(0.01, 1, size=self.NUM_FRAMES)
         self.dy_vals = np.random.uniform(0.01, 1, size=self.NUM_FRAMES)
-        #self.angles = np.random.uniform(0, 1, size=self.NUM_FRAMES) * (2. * np.pi / 3.)
-        self.angles = np.random.uniform(0, 1, size=self.NUM_FRAMES) * 2. * np.pi 
+        self.angles = np.random.uniform(0, 1, size=self.NUM_FRAMES) * 2. * np.pi
 
     def pfluence(self, xvals):
         return np.sqrt(-np.log(xvals)) * (1 - np.exp(-xvals * 200))
@@ -100,12 +99,10 @@ class DataGenerator:
     def generate_dataset(self):
         tobj, ftobj = self.target_obj()
         unitc, funitc = self.unit_cell()
+        ftobj = 10**(-4) * ftobj
+        funitc = 10**(-4) * funitc
         intens_vals = np.zeros((self.NUM_FRAMES, self.N, self.N))
-        noise_vals = None
         rotated_ftobjs = np.zeros((self.NUM_FRAMES, self.N, self.N), dtype=np.complex128)
-
-        if self.ADD_NOISE:
-            noise_vals = np.zeros_like(intens_vals)
 
         for i in range(self.NUM_FRAMES):
             shiftx = self.dx_vals[i]
@@ -116,26 +113,21 @@ class DataGenerator:
             ftobj_rot = rotate_arr(self.N, ftobj, self.angles[i])
             ft = fluence * ftobj_rot * phase
             rotated_ftobjs[i] = ftobj_rot
-            intens = np.abs(funitc + ft)**2
+
+            intens = np.abs(funitc + ft)**2 + self.BACKGROUND**2
 
             if self.ADD_NOISE:
-                noise_sigma = self.NOISE_K * np.sqrt(intens)
-                np.random.seed(self.SEED)
-                noise = np.random.normal(loc=0, scale=noise_sigma, size=intens.SAMPLE)
-                noise_vals[i] = noise
-                intens_vals[i] = intens + noise
+                intens_vals[i] = np.random.poisson(intens * self.EXPOSURE_TIME) / self.EXPOSURE_TIME - self.BACKGROUND**2
             else:
-                intens_vals[i] = intens
+                intens_vals[i] = intens - self.BACKGROUND**2
 
-        return intens_vals, noise_vals, rotated_ftobjs, ftobj, funitc, tobj, unitc
-
+        return intens_vals, rotated_ftobjs, ftobj, funitc, tobj, unitc
 
     def save_data(self, filename):
-        intens_vals, noise, rotated_ftobjs, ftobj, funitc, tobj, unitc = self.generate_dataset()
+        intens_vals, rotated_ftobjs, ftobj, funitc, tobj, unitc = self.generate_dataset()
         print(f"Saving dataset to {filename}")
         try:
             with h5py.File(filename, 'w') as f:
-                f.create_dataset('NOISE_K', data=self.NOISE_K)
                 f.create_dataset('SCALE', data=self.SCALE)
                 f.create_dataset('intens', data=intens_vals)
                 f.create_dataset('rotated_ftobjs', data=rotated_ftobjs)
@@ -146,18 +138,14 @@ class DataGenerator:
                 f.create_dataset('shifts', data=np.vstack((self.dx_vals, self.dy_vals)).T)
                 f.create_dataset('fluence', data=self.fluence_vals)
                 f.create_dataset('angles', data=self.angles)
-
-                if self.ADD_NOISE:
-                    f.create_dataset('noise', data=noise)
-                else:
-                    f.create_dataset('noise', data=np.empty((0,)))
+                f.create_dataset('exposure_time', data=self.EXPOSURE_TIME)
+                f.create_dataset('background', data=self.BACKGROUND)
             print(f"Dataset saved to : {filename}")
         except Exception as e:
             print(f"Failed to save dataset to {filename}: {e}")
 
 if __name__ == "__main__":
     config_file = 'config.ini'
-    ( N, SCALE, NUM_FRAMES, SEED, SAMPLE, ADD_NOISE, NOISE_K, DATA_FILE) = makedata_config(config_file)
-    generator = DataGenerator( N, SCALE, NUM_FRAMES, SEED, SAMPLE, ADD_NOISE, NOISE_K, DATA_FILE)
+    (N, SCALE, NUM_FRAMES, SEED, SAMPLE, ADD_NOISE, DATA_FILE, EXPOSURE_TIME, BACKGROUND_SQR) = makedata_config(config_file)
+    generator = DataGenerator(N, SCALE, NUM_FRAMES, SEED, SAMPLE, ADD_NOISE, DATA_FILE, EXPOSURE_TIME, BACKGROUND_SQR)
     generator.save_data(DATA_FILE)
-
