@@ -6,7 +6,7 @@ from configparser import ConfigParser
 
 
 class OrientOptimizer:
-    def __init__(self, N, fluence, shifts, ftobj, data_file, fine_step_size=0.001):
+    def __init__(self, N, fluence, shifts, ftobj, data_file):
         self.N = N
         self.cen = self.N // 2
 
@@ -23,7 +23,7 @@ class OrientOptimizer:
         self.ftobj = cp.asarray(ftobj)
 
         self.load_dataset()
-        self.fine_step_size = fine_step_size
+        self.fine_step_size = 0.001
 
     def load_dataset(self):
         with h5py.File(self.data_file, 'r') as f:
@@ -119,9 +119,7 @@ if __name__ == "__main__":
         shifts = cp.asarray(f["shifts"][:])
         fluence = cp.asarray(f["fluence"][:])
 
-    fine_step_size = 0.001 
-
-    optimizer = OrientOptimizer(N, fluence, shifts, ftobj, data_file, fine_step_size)
+    optimizer = OrientOptimizer(N, fluence, shifts, ftobj, data_file)
     optimal_angs, steps = optimizer.optimize_orientation()
     with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_orient_PS1_10Angs.h5', "w") as f:
         f['fitted_angles'] = optimal_angs.get()

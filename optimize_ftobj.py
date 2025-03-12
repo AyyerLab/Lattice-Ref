@@ -1,15 +1,7 @@
-import cupy as cp
 import h5py
 import argparse
+import cupy as cp
 from configparser import ConfigParser
-
-
-def phase_ramp(N, shiftx, shifty):
-    cen = N // 2
-    qh, qk = cp.meshgrid(cp.arange(N), cp.arange(N), indexing="ij")
-    qh -= cen
-    qk -= cen
-    return cp.exp(1j * 2.0 * cp.pi * (qh * shiftx + qk * shifty))
 
 class ObjectOptimizer:
     def __init__(self, itern, N, shifts, fluence, angles, data_file, output_file):
@@ -29,10 +21,8 @@ class ObjectOptimizer:
         self.qk -= self.cen
         self.qh -= self.cen
 
-        self.coarse_real_range = cp.linspace(-2 * 500, 2 * 500, 200)
-        self.coarse_imag_range = cp.linspace(-2 * 500, 2 * 500, 200)
-        #self.coarse_real_range = cp.linspace(-2 * 3000, 2 * 3000, 200)
-        #self.coarse_imag_range = cp.linspace(-2 * 3000, 2 * 3000, 200)
+        self.coarse_real_range = cp.linspace(-1200, 1200, 200)*10**(-4)
+        self.coarse_imag_range = cp.linspace(-1200, 1200, 200)*10**(-4)
 
     def load_data(self):
         with h5py.File(self.data_file, "r") as f:
@@ -97,7 +87,7 @@ class ObjectOptimizer:
 
                 current_best_real = coarse_best_real
                 current_best_imag = coarse_best_imag
-                initial_range = 100
+                initial_range = 100*10**(-4)
                 current_range = initial_range
                 prev_fitted_value = coarse_best_real + 1j * coarse_best_imag
 
@@ -162,7 +152,7 @@ if __name__ == "__main__":
     optimizer = ObjectOptimizer(itern, N, shifts, fluence, angles, data_file, output_file)
     results = optimizer.solve()
 
-    with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_ftobj_RIB_10Angs.h5', "w") as f:
+    with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_ftobj.h5', "w") as f:
         f['fitted_ftobj'] = results.get()
     print("\nOptimization Complete. Results saved.")
 

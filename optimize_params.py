@@ -1,19 +1,16 @@
-import cupy as cp
 import h5py
-from configparser import ConfigParser
 import argparse
-
+import cupy as cp
 from utils import get_vals
 from utils_cupy import rotate_arr
-
+from configparser import ConfigParser
 
 class ParamOptimizer:
-    def __init__(self, niter, N, ftobj, data_file, output_file, angles):
+    def __init__(self, niter, N, ftobj, data_file, angles):
         self.N = N
         self.cen = self.N // 2
         self.ITER = niter
         self.data_file = data_file
-        self.output_file = output_file
         self.ftobj = cp.asarray(ftobj)
         self.load_dataset()
         self.angles = cp.asarray(angles)
@@ -105,12 +102,10 @@ class ParamOptimizer:
             })
 
             print(
-                f"ITER {self.ITER}: FRAME {frame_idx + 1}/{num_frames}: "
+                f"ITER {self.ITER}: FRAME {frame_idx + 1}/{num_frames}:"
                 f" Dx={dx:.3f}, Dy={dy:.3f},"
-                f" Fluence={fluence:.3f},"
-                f" Angle={angle:.2f}",
-                flush=True
-            )
+                f" Fluence={fluence:.3f}",
+                flush=True)
 
         fitted_dx = cp.array([res['dx'] for res in results])
         fitted_dy = cp.array([res['dy'] for res in results])
@@ -133,7 +128,6 @@ if __name__ == "__main__":
     niter = config.getint("OPTIMIZATION", "num_iteration")
     N = config.getint("PARAMETERS", "N")
     data_file = config["FILES"]["data_file"]
-    output_file = config["FILES"]["output_file"]
     with h5py.File(data_file, "r") as f:
         ftobj = cp.asarray(f["ftobj"][:])
         angles = cp.asarray(f["angles"][:])
@@ -141,9 +135,9 @@ if __name__ == "__main__":
     seed = config.getint("PARAMETERS", "seed")
     num_frames = config.getint("PARAMETERS", "num_frames")
 
-    optimizer = ParamOptimizer(niter, N, ftobj, data_file, output_file, angles)
+    optimizer = ParamOptimizer(niter, N, ftobj, data_file, angles)
     fitted_dx, fitted_dy, fitted_fluence, min_errors, itrs = optimizer.optimize_params()
-    with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_params_RIB_10Angs.h5', "w") as f:
+    with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_params.h5', "w") as f:
         f['fitted_dx'] = fitted_dx.get()
         f['fitted_dy'] = fitted_dy.get()
         f['fitted_fl'] = fitted_fluence.get()
