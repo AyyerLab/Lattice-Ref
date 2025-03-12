@@ -24,9 +24,10 @@ def get_vals(array, cen, h, k):
     return array[qh, qk]
 
 def init_tobj(N, pixels):
-    obj = np.zeros((N,N))
+    obj = np.zeros((N, N))
     cen = (N // 2, N // 2)
     y, x = np.ogrid[:N, :N]
     dcen = np.sqrt((x - cen[1])**2 + (y - cen[0])**2)
-    obj.ravel()[np.argsort(dcen.ravel())[:pixels]] = 1
+    idx = np.argsort(dcen.ravel())[:pixels]
+    obj.ravel()[idx] = np.random.rand(pixels)
     return obj
