@@ -4,7 +4,6 @@ import cupy as cp
 from utils_cupy import rotate_arr
 from configparser import ConfigParser
 
-
 class OrientOptimizer:
     def __init__(self, N, fluence, shifts, ftobj, data_file):
         self.N = N
@@ -100,28 +99,3 @@ class OrientOptimizer:
             steps[i] = total_steps
             print(f"Frame {i+1}:  Best Angle: {current_ang}, Steps: {total_steps}", flush=True)
         return optimal_angs, steps
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Optimize orientation using OrientOptimizer.")
-    parser.add_argument("--config", type=str, help="Path to configuration file", required=True)
-
-    args = parser.parse_args()
-
-    config = ConfigParser()
-    config.read(args.config)
-
-    N = config.getint("PARAMETERS", "n")
-    data_file = config["FILES"]["data_file"]
-
-    with h5py.File(data_file, "r") as f:
-        ftobj = cp.asarray(f["ftobj"][:])
-        shifts = cp.asarray(f["shifts"][:])
-        fluence = cp.asarray(f["fluence"][:])
-
-    optimizer = OrientOptimizer(N, fluence, shifts, ftobj, data_file)
-    optimal_angs, steps = optimizer.optimize_orientation()
-    with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_orient_PS1_10Angs.h5', "w") as f:
-        f['fitted_angles'] = optimal_angs.get()
-    print("Orientation Optimization Complete.")
-

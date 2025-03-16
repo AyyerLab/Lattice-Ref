@@ -115,31 +115,3 @@ class ParamOptimizer:
 
         return fitted_dx, fitted_dy, fitted_fluence, min_errors, itrs
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Optimize parameters (shifts, fluence) using ParamOptimizer.")
-    parser.add_argument("--config", type=str, help="Path to configuration file", required=True)
-
-    args = parser.parse_args()
-
-    config = ConfigParser()
-    config.read(args.config)
-
-    niter = config.getint("OPTIMIZATION", "num_iteration")
-    N = config.getint("PARAMETERS", "N")
-    data_file = config["FILES"]["data_file"]
-    with h5py.File(data_file, "r") as f:
-        ftobj = cp.asarray(f["ftobj"][:])
-        angles = cp.asarray(f["angles"][:])
-
-    seed = config.getint("PARAMETERS", "seed")
-    num_frames = config.getint("PARAMETERS", "num_frames")
-
-    optimizer = ParamOptimizer(niter, N, ftobj, data_file, angles)
-    fitted_dx, fitted_dy, fitted_fluence, min_errors, itrs = optimizer.optimize_params()
-    with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_params.h5', "w") as f:
-        f['fitted_dx'] = fitted_dx.get()
-        f['fitted_dy'] = fitted_dy.get()
-        f['fitted_fl'] = fitted_fluence.get()
-    print("Optimization Complete.")
-

@@ -35,10 +35,8 @@ class ObjectOptimizer:
         real_grid, imag_grid = cp.meshgrid(real_range, imag_range, indexing="ij")
         ftobj_guess_grid = real_grid + 1j * imag_grid
 
-        Icalc = cp.abs(
-            funitc_vals[:, None, None]
-            + fluence_vals[:, None, None] * ftobj_guess_grid[None, :, :] * pramp_vals[:, None, None]
-        ) ** 2
+        Icalc = cp.abs(funitc_vals[:, None, None] +
+                       fluence_vals[:, None, None] * ftobj_guess_grid[None, :, :] * pramp_vals[:, None, None]) ** 2
 
         err = (Icalc - intens_vals[:, None, None]) ** 2
         return err.sum(axis=0)
@@ -72,14 +70,8 @@ class ObjectOptimizer:
                 pramp_vals = cp.exp(1j * 2 * cp.pi * (qh_r_rounded * self.shiftx + qk_r_rounded * self.shifty))
 
 
-                err_grid_coarse = self.compute_error_grid(
-                    self.coarse_real_range,
-                    self.coarse_imag_range,
-                    funitc_vals,
-                    self.fluence,
-                    pramp_vals,
-                    intens_vals,
-                )
+                err_grid_coarse = self.compute_error_grid(self.coarse_real_range,self.coarse_imag_range,
+                                                          funitc_vals,self.fluence,pramp_vals,intens_vals,)
 
                 min_index_coarse = cp.unravel_index(cp.argmin(err_grid_coarse), err_grid_coarse.shape)
                 coarse_best_real = self.coarse_real_range[min_index_coarse[0]]
@@ -97,21 +89,15 @@ class ObjectOptimizer:
                 max_refinement_steps = 500
 
                 for step in range(max_refinement_steps):
-                    fine_real_range = cp.linspace(
-                        current_best_real - current_range, current_best_real + current_range, grid_size
-                    )
-                    fine_imag_range = cp.linspace(
-                        current_best_imag - current_range, current_best_imag + current_range, grid_size
-                    )
+                    fine_real_range = cp.linspace(current_best_real - current_range,
+                                                  current_best_real + current_range,
+                                                  grid_size)
+                    fine_imag_range = cp.linspace(current_best_imag - current_range,
+                                                  current_best_imag + current_range,
+                                                  grid_size)
 
-                    err_grid_fine = self.compute_error_grid(
-                        fine_real_range,
-                        fine_imag_range,
-                        funitc_vals,
-                        self.fluence,
-                        pramp_vals,
-                        intens_vals,
-                    )
+                    err_grid_fine = self.compute_error_grid(fine_real_range,fine_imag_range,
+                                                            funitc_vals,self.fluence,pramp_vals,intens_vals,)
 
                     min_index_fine = cp.unravel_index(cp.argmin(err_grid_fine), err_grid_fine.shape)
                     fine_best_real = fine_real_range[min_index_fine[0]]
@@ -130,29 +116,4 @@ class ObjectOptimizer:
                 results[Qh_ + self.cen, Qk_ + self.cen] = fitted_value
 
         return results
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Optimize Fourier transform of an object.")
-    parser.add_argument("--config", type=str, help="Path to configuration file", required=True)
-
-    args = parser.parse_args()
-
-    config = ConfigParser()
-    config.read(args.config)
-
-    itern = config.getint("OPTIMIZATION", "num_iteration")
-    N = config.getint("PARAMETERS", "N")
-    data_file = config["FILES"]["data_file"]
-    output_file = config["FILES"]["output_file"]
-    with h5py.File(data_file, "r") as f:
-        shifts = cp.asarray(f["shifts"][:])
-        fluence = cp.asarray(f["fluence"][:])
-        angles = cp.asarray(f["angles"][:])
-
-    optimizer = ObjectOptimizer(itern, N, shifts, fluence, angles, data_file, output_file)
-    results = optimizer.solve()
-
-    with h5py.File('/scratch/mallabhi/lattice_ref/output/optimize_ftobj.h5', "w") as f:
-        f['fitted_ftobj'] = results.get()
-    print("\nOptimization Complete. Results saved.")
 
