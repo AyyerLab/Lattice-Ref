@@ -27,9 +27,8 @@ def run_config(config_file):
     NUM_ITER = config.getint('OPTIMIZATION', 'num_iteration')
     INIT_OBJ = config.get('OPTIMIZATION', 'init_obj')
     PIXELS = config.getint('OPTIMIZATION', 'pixels')
-    USE_SHRINKWRAP = config.getboolean('SHRINKWRAP', 'use')
 
     DATA_FILE = config.get('FILES', 'data_file')
     OUTPUT_FILE = config.get('FILES', 'output_file')
-    return N, NUM_FRAMES, NUM_ITER, SEED, SAMPLE, INIT_OBJ, PIXELS, USE_SHRINKWRAP, DATA_FILE, OUTPUT_FILE
+    return N, NUM_FRAMES, NUM_ITER, SEED, SAMPLE, INIT_OBJ, PIXELS, DATA_FILE, OUTPUT_FILE
 
